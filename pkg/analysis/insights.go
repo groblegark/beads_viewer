@@ -53,7 +53,7 @@ func getTopItems(m map[string]float64, limit int) []InsightItem {
 		return ss[i].Value > ss[j].Value
 	})
 
-	var result []InsightItem
+	result := make([]InsightItem, 0)
 	for i := 0; i < len(ss) && i < limit; i++ {
 		result = append(result, InsightItem{ID: ss[i].Key, Value: ss[i].Value})
 	}
