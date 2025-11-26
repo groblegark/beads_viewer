@@ -30,9 +30,10 @@ type Analyzer struct {
 
 func NewAnalyzer(issues []model.Issue) *Analyzer {
 	g := simple.NewDirectedGraph()
-	idToNode := make(map[string]int64)
-	nodeToID := make(map[int64]string)
-	issueMap := make(map[string]model.Issue)
+	// Pre-allocate maps for efficiency
+	idToNode := make(map[string]int64, len(issues))
+	nodeToID := make(map[int64]string, len(issues))
+	issueMap := make(map[string]model.Issue, len(issues))
 
 	// 1. Add Nodes
 	for _, issue := range issues {

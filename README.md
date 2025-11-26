@@ -4,19 +4,20 @@ A polished, high-performance TUI for managing and exploring [Beads](https://gith
 
 ## Features
 
-### 🧠 Graph Theory Analytics
-*   **Critical Path Analysis**: Automatically identifies "Deep" tasks that block long chains of work (Impact Score).
-*   **Centrality Metrics**: Computes PageRank and Betweenness to highlight structural bottlenecks.
-*   **Cycle Detection**: Warns about circular dependencies.
+### 🧠 Advanced Analytics & Insights
+*   **Project Health Dashboard**: Press `i` to view high-level insights.
+*   **Bottleneck Detection**: Identifies tasks blocking critical paths via Betweenness Centrality.
+*   **Impact Analysis**: Scores tasks based on downstream dependencies.
+*   **Cycle Alert**: Detects and lists circular dependencies.
 
 ### 🖥️ Visual Dashboard
 *   **Kanban Board**: Press `b` to toggle a 4-column Kanban board.
-*   **Adaptive Split-View**: Master-detail dashboard on wide screens.
-*   **Ultra-Wide Layouts**: Shows Impact Scores (🌋/🏔️) on large displays.
+*   **Sparklines**: Visual bars for Impact scores in Ultra-Wide mode.
+*   **Adaptive Layouts**: Responsive design for all terminal sizes.
 
 ### ⚡ Workflow
 *   **Instant Filtering**: `o` (Open), `r` (Ready), `c` (Closed), `a` (All).
-*   **Mermaid Export**: `bv --export-md report.md` generates a report with a visual dependency graph.
+*   **Mermaid Export**: `bv --export-md report.md`.
 
 ## Installation
 
@@ -30,11 +31,12 @@ curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main
 bv
 ```
 
-### Keybindings
+### Controls
 
 | Key | Context | Action |
 | :--- | :--- | :--- |
 | `b` | Global | Toggle **Kanban Board** |
+| `i` | Global | Toggle **Insights Dashboard** |
 | `Tab` | Split View | Switch focus |
 | `h`/`j`/`k`/`l`| Board | Navigate |
 | `o` / `r` / `c` | Global | Filter status |

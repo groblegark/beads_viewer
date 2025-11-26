@@ -28,6 +28,7 @@ const (
 	focusList focus = iota
 	focusDetail
 	focusBoard
+	focusInsights
 )
 
 type UpdateMsg struct {
@@ -53,6 +54,7 @@ type Model struct {
 	viewport      viewport.Model
 	renderer      *glamour.TermRenderer
 	board         BoardModel
+	insightsPanel InsightsModel
 	
 	// Update State
 	updateAvailable bool
@@ -195,6 +197,10 @@ func NewModel(issues []model.Issue) Model {
 	
 	// Initialize Board
 	board := NewBoardModel(issues)
+	
+	// Initialize Insights
+	ins := graphStats.GenerateInsights(10)
+	insightsPanel := NewInsightsModel(ins)
 
 	m := Model{
 		issues:        issues,
@@ -203,6 +209,7 @@ func NewModel(issues []model.Issue) Model {
 		list:          l,
 		renderer:      r,
 		board:         board,
+		insightsPanel: insightsPanel,
 		currentFilter: "all",
 		focused:       focusList,
 		countOpen:     cOpen,
@@ -262,10 +269,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.focused = focusList
 				}
+			case "i":
+				if m.focused == focusInsights {
+					m.focused = focusList
+				} else {
+					m.focused = focusInsights
+				}
 			}
 
 			// Focus-specific
-			if m.focused == focusBoard {
+			if m.focused == focusInsights {
+				// Pass keys to insights model if it becomes interactive
+				if msg.String() == "esc" || msg.String() == "q" || msg.String() == "i" {
+					m.focused = focusList
+				}
+			} else if m.focused == focusBoard {
 				switch msg.String() {
 				case "h", "left":
 					m.board.MoveLeft()
@@ -376,6 +394,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				glamour.WithWordWrap(m.viewport.Width),
 			)
 		}
+		
+		m.insightsPanel.SetSize(m.width, m.height-headerHeight)
+		
 		m.updateViewportContent()
 	}
 	
@@ -400,7 +421,9 @@ func (m Model) View() string {
 
 	var body string
 
-	if m.isBoardView {
+	if m.focused == focusInsights {
+		body = m.insightsPanel.View()
+	} else if m.isBoardView {
 		body = m.board.View(m.width, m.height-1)
 	} else if m.isSplitView {
 		// Split View
@@ -459,18 +482,20 @@ func (m *Model) renderFooter() string {
 	}
 
 	var keys string
-	if m.isBoardView {
-		keys = "h/j/k/l: nav • enter: view • b: list • q: quit"
+	if m.focused == focusInsights {
+		keys = "i: close • q: quit"
+	} else if m.isBoardView {
+		keys = "h/j/k/l: nav • enter: view • b: list • i: insights • q: quit"
 	} else if m.list.FilterState() == list.Filtering {
 		keys = "esc: cancel filter • enter: select"
 	} else {
 		if m.isSplitView {
-			keys = "tab: focus • b: board • o/c/r/a: filter • /: search • q: quit"
+			keys = "tab: focus • b: board • i: insights • o/c/r/a: filter • /: search • q: quit"
 		} else {
 			if m.showDetails {
 				keys = "esc: back • j/k: scroll • q: quit"
 			} else {
-				keys = "enter: details • b: board • o/c/r/a: filter • /: search • q: quit"
+				keys = "enter: details • b: board • i: insights • o/c/r/a: filter • /: search • q: quit"
 			}
 		}
 	}

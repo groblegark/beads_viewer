@@ -102,19 +102,26 @@ func (d IssueDelegate) Render(w io.Writer, m list.Model, index int, listItem lis
 		updatedStr := FormatTimeRel(i.Issue.UpdatedAt)
 		updated = ColAgeStyle.Copy().Width(10).Render(updatedStr)
 		
-		// Impact Score
-		impactVal := int(i.Impact)
-		impactStr := ""
-		if impactVal > 5 {
-			impactStr = fmt.Sprintf("🌋%d", impactVal)
-		} else if impactVal > 2 {
-			impactStr = fmt.Sprintf("🏔️%d", impactVal)
-		} else if impactVal > 0 {
-			impactStr = fmt.Sprintf("⛰️%d", impactVal)
-		}
-		updated = lipgloss.JoinHorizontal(lipgloss.Left, updated, lipgloss.NewStyle().Width(6).Align(lipgloss.Right).Render(impactStr))
+		// Impact Score Sparkline
+		// Normalize impact? Assume max is ~10 for now?
+		// Or relative to max? We don't have max here.
+		// Let's assume max=10 for visualization scaling.
+		normImpact := i.Impact / 10.0
+		if normImpact > 1.0 { normImpact = 1.0 }
 		
-		extraWidth += 16 // 10 (Updated) + 6 (Impact)
+		impactStr := RenderSparkline(normImpact, 4)
+		impactStyle := lipgloss.NewStyle().Foreground(GetHeatmapColor(normImpact))
+		
+		impactRender := impactStyle.Render(impactStr)
+		
+		// Append numeric if space?
+		if i.Impact > 0 {
+			impactRender = fmt.Sprintf("%s %.0f", impactRender, i.Impact)
+		}
+		
+		updated = lipgloss.JoinHorizontal(lipgloss.Left, updated, lipgloss.NewStyle().Width(8).Align(lipgloss.Right).Render(impactRender))
+		
+		extraWidth += 18 // 10 (Updated) + 8 (Impact)
 	}
 
 	// Calculate Title Width
