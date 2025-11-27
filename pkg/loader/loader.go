@@ -47,20 +47,34 @@ func FindJSONLPath(beadsDir string) (string, error) {
 		return "", fmt.Errorf("no beads JSONL file found in %s", beadsDir)
 	}
 
-	// Prefer beads.jsonl (canonical name)
-	for _, name := range candidates {
-		if name == "beads.jsonl" {
-			return filepath.Join(beadsDir, name), nil
+	// Priority order for beads files:
+	// 1. beads.jsonl (canonical)
+	// 2. beads.base.jsonl (bd's primary storage)
+	// 3. issues.jsonl (legacy)
+	// 4. First candidate
+	preferredNames := []string{"beads.jsonl", "beads.base.jsonl", "issues.jsonl"}
+
+	for _, preferred := range preferredNames {
+		for _, name := range candidates {
+			if name == preferred {
+				path := filepath.Join(beadsDir, name)
+				// Check if file has content (skip empty files)
+				if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+					return path, nil
+				}
+			}
 		}
 	}
 
-	// Fall back to issues.jsonl (legacy) or first candidate
+	// Fall back to first non-empty candidate
 	for _, name := range candidates {
-		if name == "issues.jsonl" {
-			return filepath.Join(beadsDir, name), nil
+		path := filepath.Join(beadsDir, name)
+		if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+			return path, nil
 		}
 	}
 
+	// Last resort: return first candidate even if empty
 	return filepath.Join(beadsDir, candidates[0]), nil
 }
 

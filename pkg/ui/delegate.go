@@ -5,6 +5,8 @@ import (
 	"io"
 	"strings"
 
+	"beads_viewer/pkg/analysis"
+
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -12,7 +14,9 @@ import (
 
 // IssueDelegate renders issue items in the list
 type IssueDelegate struct {
-	Theme Theme
+	Theme             Theme
+	ShowPriorityHints bool
+	PriorityHints     map[string]*analysis.PriorityRecommendation
 }
 
 func (d IssueDelegate) Height() int {
@@ -38,6 +42,8 @@ func (d IssueDelegate) Render(w io.Writer, m list.Model, index int, listItem lis
 	if width <= 0 {
 		width = 80
 	}
+	// Reduce width by 1 to prevent terminal wrapping on the exact edge
+	width = width - 1
 
 	isSelected := index == m.Index()
 
@@ -85,8 +91,11 @@ func (d IssueDelegate) Render(w io.Writer, m list.Model, index int, listItem lis
 	}
 
 	// Left side fixed columns
-	// [selector 2] [icon 2] [prio 2] [status 12] [id dynamic] [space]
+	// [selector 2] [icon 2] [prio 2] [hint 1-2] [status 12] [id dynamic] [space]
 	leftFixedWidth := 2 + 3 + 3 + 12 + 1
+	if d.ShowPriorityHints {
+		leftFixedWidth += 1 // Extra space for hint indicator
+	}
 
 	// ID width - use actual rune length, but cap reasonably
 	idRunes := []rune(idStr)
@@ -96,6 +105,11 @@ func (d IssueDelegate) Render(w io.Writer, m list.Model, index int, listItem lis
 		idStr = truncateRunesHelper(idStr, 35, "…")
 	}
 	leftFixedWidth += idWidth + 1
+
+	// Diff badge width adjustment
+	if badge := i.DiffStatus.Badge(); badge != "" {
+		leftFixedWidth += lipgloss.Width(badge) + 1
+	}
 
 	// Title gets everything in between
 	titleWidth := width - leftFixedWidth - rightWidth - 2
@@ -126,6 +140,19 @@ func (d IssueDelegate) Render(w io.Writer, m list.Model, index int, listItem lis
 
 	// Priority
 	leftSide.WriteString(prioIcon)
+
+	// Priority hint indicator (⬆️/⬇️)
+	if d.ShowPriorityHints && d.PriorityHints != nil {
+		if hint, ok := d.PriorityHints[i.Issue.ID]; ok {
+			if hint.Direction == "increase" {
+				leftSide.WriteString(t.Renderer.NewStyle().Foreground(lipgloss.Color("#FF6B6B")).Render("⬆"))
+			} else if hint.Direction == "decrease" {
+				leftSide.WriteString(t.Renderer.NewStyle().Foreground(lipgloss.Color("#4ECDC4")).Render("⬇"))
+			}
+		} else {
+			leftSide.WriteString(" ")
+		}
+	}
 	leftSide.WriteString(" ")
 
 	// Status with color
@@ -136,6 +163,12 @@ func (d IssueDelegate) Render(w io.Writer, m list.Model, index int, listItem lis
 	// ID
 	leftSide.WriteString(t.Renderer.NewStyle().Foreground(t.Secondary).Bold(true).Render(idStr))
 	leftSide.WriteString(" ")
+
+	// Diff badge (time-travel mode)
+	if badge := i.DiffStatus.Badge(); badge != "" {
+		leftSide.WriteString(badge)
+		leftSide.WriteString(" ")
+	}
 
 	// Title
 	if isSelected {
@@ -155,14 +188,21 @@ func (d IssueDelegate) Render(w io.Writer, m list.Model, index int, listItem lis
 		padding = 1
 	}
 
+	// Construct the row string
 	row := leftSide.String() + strings.Repeat(" ", padding) + t.Renderer.NewStyle().Foreground(t.Secondary).Render(rightSide)
 
-	// Apply row background for selection
+	// Force truncation to width-1 to prevent any terminal wrapping issues
+	// We can't easily truncate ANSI strings by rune count without a helper, 
+	// but MaxWidth does soft wrapping. 
+	// The best approach here is to rely on the calculated widths being correct,
+	// but reduce the input width slightly to be safe.
+	
+	// Apply row background for selection and clamp width
+	rowStyle := t.Renderer.NewStyle().Width(width).MaxWidth(width)
 	if isSelected {
-		row = t.Renderer.NewStyle().
-			Background(t.Highlight).
-			Width(width - 1).
-			Render(row)
+		row = rowStyle.Background(t.Highlight).Render(row)
+	} else {
+		row = rowStyle.Render(row)
 	}
 
 	fmt.Fprint(w, row)

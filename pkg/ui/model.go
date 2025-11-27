@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"beads_viewer/pkg/analysis"
+	"beads_viewer/pkg/loader"
 	"beads_viewer/pkg/model"
+	"beads_viewer/pkg/recipe"
 	"beads_viewer/pkg/updater"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -33,6 +35,8 @@ const (
 	focusBoard
 	focusGraph
 	focusInsights
+	focusActionable
+	focusRecipePicker
 	focusHelp
 	focusQuitConfirm
 )
@@ -76,16 +80,20 @@ type Model struct {
 	updateURL       string
 
 	// Focus and View State
-	focused         focus
-	isSplitView     bool
-	isBoardView     bool
-	isGraphView     bool
-	showDetails     bool
-	showHelp        bool
-	showQuitConfirm bool
-	ready           bool
-	width           int
-	height          int
+	focused          focus
+	isSplitView      bool
+	isBoardView      bool
+	isGraphView      bool
+	isActionableView bool
+	showDetails      bool
+	showHelp         bool
+	showQuitConfirm  bool
+	ready            bool
+	width            int
+	height           int
+
+	// Actionable view
+	actionableView ActionableModel
 
 	// Filter state
 	currentFilter string
@@ -96,6 +104,24 @@ type Model struct {
 	countReady   int
 	countBlocked int
 	countClosed  int
+
+	// Priority hints
+	showPriorityHints   bool
+	priorityHints       map[string]*analysis.PriorityRecommendation // issueID -> recommendation
+
+	// Recipe picker
+	showRecipePicker bool
+	recipePicker     RecipePickerModel
+	activeRecipe     *recipe.Recipe
+	recipeLoader     *recipe.Loader
+
+	// Time-travel mode
+	timeTravelMode   bool
+	timeTravelDiff   *analysis.SnapshotDiff
+	timeTravelSince  string
+	newIssueIDs      map[string]bool // Issues in diff.NewIssues
+	closedIssueIDs   map[string]bool // Issues in diff.ClosedIssues
+	modifiedIssueIDs map[string]bool // Issues in diff.ModifiedIssues
 }
 
 // NewModel creates a new Model from the given issues
@@ -197,26 +223,42 @@ func NewModel(issues []model.Issue) Model {
 
 	// Initialize sub-components
 	board := NewBoardModel(issues, theme)
-	ins := graphStats.GenerateInsights(10)
+	ins := graphStats.GenerateInsights(len(issues)) // allow UI to show as many as fit
 	insightsPanel := NewInsightsModel(ins, issueMap, theme)
 	graphView := NewGraphModel(issues, &ins, theme)
 
+	// Generate priority recommendations for hints
+	recommendations := analyzer.GenerateRecommendations()
+	priorityHints := make(map[string]*analysis.PriorityRecommendation, len(recommendations))
+	for i := range recommendations {
+		priorityHints[recommendations[i].IssueID] = &recommendations[i]
+	}
+
+	// Initialize recipe loader
+	recipeLoader := recipe.NewLoader()
+	_ = recipeLoader.Load() // Load recipes (errors are non-fatal, will just show empty)
+	recipePicker := NewRecipePickerModel(recipeLoader.List(), theme)
+
 	return Model{
-		issues:        issues,
-		issueMap:      issueMap,
-		analysis:      graphStats,
-		list:          l,
-		renderer:      renderer,
-		board:         board,
-		graphView:     graphView,
-		insightsPanel: insightsPanel,
-		theme:         theme,
-		currentFilter: "all",
-		focused:       focusList,
-		countOpen:     cOpen,
-		countReady:    cReady,
-		countBlocked:  cBlocked,
-		countClosed:   cClosed,
+		issues:            issues,
+		issueMap:          issueMap,
+		analysis:          graphStats,
+		list:              l,
+		renderer:          renderer,
+		board:             board,
+		graphView:         graphView,
+		insightsPanel:     insightsPanel,
+		theme:             theme,
+		currentFilter:     "all",
+		focused:           focusList,
+		countOpen:         cOpen,
+		countReady:        cReady,
+		countBlocked:      cBlocked,
+		countClosed:       cClosed,
+		priorityHints:     priorityHints,
+		showPriorityHints: false, // Off by default, toggle with 'p'
+		recipeLoader:      recipeLoader,
+		recipePicker:      recipePicker,
 	}
 }
 
@@ -313,6 +355,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.focused = focusList
 					return m, nil
 				}
+				if m.isActionableView {
+					m.isActionableView = false
+					m.focused = focusList
+					return m, nil
+				}
 				// At main list - show quit confirmation
 				m.showQuitConfirm = true
 				m.focused = focusQuitConfirm
@@ -330,6 +377,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "b":
 				m.isBoardView = !m.isBoardView
 				m.isGraphView = false
+				m.isActionableView = false
 				if m.isBoardView {
 					m.focused = focusBoard
 				} else {
@@ -340,8 +388,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Toggle graph view
 				m.isGraphView = !m.isGraphView
 				m.isBoardView = false
+				m.isActionableView = false
 				if m.isGraphView {
 					m.focused = focusGraph
+				} else {
+					m.focused = focusList
+				}
+				return m, nil
+
+			case "a":
+				// Toggle actionable view
+				m.isActionableView = !m.isActionableView
+				m.isGraphView = false
+				m.isBoardView = false
+				if m.isActionableView {
+					// Build execution plan
+					analyzer := analysis.NewAnalyzer(m.issues)
+					plan := analyzer.GetExecutionPlan()
+					m.actionableView = NewActionableModel(plan, m.theme)
+					m.actionableView.SetSize(m.width, m.height-2)
+					m.focused = focusActionable
 				} else {
 					m.focused = focusList
 				}
@@ -354,11 +420,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.focused = focusInsights
 					m.isGraphView = false
 					m.isBoardView = false
+					m.isActionableView = false
 				}
+
+			case "p":
+				// Toggle priority hints
+				m.showPriorityHints = !m.showPriorityHints
+				// Update delegate with new state
+				m.list.SetDelegate(IssueDelegate{
+					Theme:             m.theme,
+					ShowPriorityHints: m.showPriorityHints,
+					PriorityHints:     m.priorityHints,
+				})
+				return m, nil
+
+			case "R":
+				// Toggle recipe picker overlay
+				m.showRecipePicker = !m.showRecipePicker
+				if m.showRecipePicker {
+					m.recipePicker.SetSize(m.width, m.height-1)
+					m.focused = focusRecipePicker
+				} else {
+					m.focused = focusList
+				}
+				return m, nil
 			}
 
 			// Focus-specific key handling
 			switch m.focused {
+			case focusRecipePicker:
+				m = m.handleRecipePickerKeys(msg)
+
 			case focusInsights:
 				m = m.handleInsightsKeys(msg)
 
@@ -367,6 +459,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case focusGraph:
 				m = m.handleGraphKeys(msg)
+
+			case focusActionable:
+				m = m.handleActionableKeys(msg)
 
 			case focusList:
 				m = m.handleListKeys(msg)
@@ -382,37 +477,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.isSplitView = msg.Width > SplitViewThreshold
 		m.ready = true
-
-		// Layout calculations
-		headerHeight := 1
-		availableHeight := msg.Height - headerHeight
-
-		var listWidth int
+		bodyHeight := m.height - 1 // keep 1 row for footer
+		if bodyHeight < 5 {
+			bodyHeight = 5
+		}
 
 		if m.isSplitView {
-			listWidth = int(float64(msg.Width) * 0.4)
-			detailWidth := msg.Width - listWidth - 4
+			// Calculate dimensions accounting for 2 panels with borders(2)+padding(2) = 4 overhead each
+			// Total overhead = 8
+			availWidth := msg.Width - 8
+			if availWidth < 10 {
+				availWidth = 10
+			}
 
-			m.list.SetSize(listWidth, availableHeight)
-			m.viewport = viewport.New(detailWidth, availableHeight-2)
+			listInnerWidth := int(float64(availWidth) * 0.4)
+			detailInnerWidth := availWidth - listInnerWidth
 
-			// Update renderer width for split view (keep existing if this fails)
+			// listHeight fits header (1) + page line (1) inside a panel with Border (2)
+			listHeight := bodyHeight - 4
+			if listHeight < 3 {
+				listHeight = 3
+			}
+
+			m.list.SetSize(listInnerWidth, listHeight)
+			m.viewport = viewport.New(detailInnerWidth, bodyHeight-2) // Account for border
+
 			if r, err := glamour.NewTermRenderer(
 				glamour.WithAutoStyle(),
-				glamour.WithWordWrap(m.viewport.Width),
+				glamour.WithWordWrap(detailInnerWidth),
 			); err == nil {
 				m.renderer = r
 			}
 		} else {
-			listWidth = msg.Width
-			m.list.SetSize(msg.Width, availableHeight)
-			m.viewport = viewport.New(msg.Width, availableHeight-2)
+			listHeight := bodyHeight - 2
+			if listHeight < 3 {
+				listHeight = 3
+			}
+			m.list.SetSize(msg.Width, listHeight)
+			m.viewport = viewport.New(msg.Width, bodyHeight-1)
+			
+			// Update renderer for full width
+			if r, err := glamour.NewTermRenderer(
+				glamour.WithAutoStyle(),
+				glamour.WithWordWrap(msg.Width),
+			); err == nil {
+				m.renderer = r
+			}
 		}
 
-		// Update delegate (it uses width directly now)
 		m.list.SetDelegate(IssueDelegate{Theme: m.theme})
 
-		m.insightsPanel.SetSize(m.width, m.height-headerHeight)
+		m.insightsPanel.SetSize(m.width, bodyHeight)
 		m.updateViewportContent()
 	}
 
@@ -510,6 +625,58 @@ func (m Model) handleGraphKeys(msg tea.KeyMsg) Model {
 	return m
 }
 
+// handleActionableKeys handles keyboard input when actionable view is focused
+func (m Model) handleActionableKeys(msg tea.KeyMsg) Model {
+	switch msg.String() {
+	case "j", "down":
+		m.actionableView.MoveDown()
+	case "k", "up":
+		m.actionableView.MoveUp()
+	case "enter":
+		// Jump to selected issue in list view
+		selectedID := m.actionableView.SelectedIssueID()
+		if selectedID != "" {
+			for i, item := range m.list.Items() {
+				if issueItem, ok := item.(IssueItem); ok && issueItem.Issue.ID == selectedID {
+					m.list.Select(i)
+					break
+				}
+			}
+			m.isActionableView = false
+			m.focused = focusList
+			if m.isSplitView {
+				m.focused = focusDetail
+			} else {
+				m.showDetails = true
+			}
+			m.updateViewportContent()
+		}
+	}
+	return m
+}
+
+// handleRecipePickerKeys handles keyboard input when recipe picker is focused
+func (m Model) handleRecipePickerKeys(msg tea.KeyMsg) Model {
+	switch msg.String() {
+	case "j", "down":
+		m.recipePicker.MoveDown()
+	case "k", "up":
+		m.recipePicker.MoveUp()
+	case "esc":
+		m.showRecipePicker = false
+		m.focused = focusList
+	case "enter":
+		// Apply selected recipe
+		if selected := m.recipePicker.SelectedRecipe(); selected != nil {
+			m.activeRecipe = selected
+			m.applyRecipe(selected)
+		}
+		m.showRecipePicker = false
+		m.focused = focusList
+	}
+	return m
+}
+
 // handleInsightsKeys handles keyboard input when insights panel is focused
 func (m Model) handleInsightsKeys(msg tea.KeyMsg) Model {
 	switch msg.String() {
@@ -598,6 +765,13 @@ func (m Model) handleListKeys(msg tea.KeyMsg) Model {
 	case "a":
 		m.currentFilter = "all"
 		m.applyFilter()
+	case "t", "T":
+		// Toggle time-travel mode
+		if m.timeTravelMode {
+			m.exitTimeTravelMode()
+		} else {
+			m.enterTimeTravelMode("HEAD~5") // Default to comparing with 5 commits ago
+		}
 	}
 	return m
 }
@@ -612,6 +786,8 @@ func (m Model) View() string {
 	// Quit confirmation overlay takes highest priority
 	if m.showQuitConfirm {
 		body = m.renderQuitConfirm()
+	} else if m.showRecipePicker {
+		body = m.recipePicker.View()
 	} else if m.showHelp {
 		body = m.renderHelpOverlay()
 	} else if m.focused == focusInsights {
@@ -620,6 +796,9 @@ func (m Model) View() string {
 		body = m.graphView.View(m.width, m.height-1)
 	} else if m.isBoardView {
 		body = m.board.View(m.width, m.height-1)
+	} else if m.isActionableView {
+		m.actionableView.SetSize(m.width, m.height-2)
+		body = m.actionableView.Render()
 	} else if m.isSplitView {
 		body = m.renderSplitView()
 	} else {
@@ -673,8 +852,11 @@ func (m Model) renderQuitConfirm() string {
 func (m Model) renderListWithHeader() string {
 	t := m.theme
 
-	// Calculate dimensions
-	availableHeight := m.height - 3 // footer + header + border
+	// Calculate dimensions based on actual list height set in sizing
+	availableHeight := m.list.Height()
+	if availableHeight == 0 {
+		availableHeight = m.height - 3 // fallback
+	}
 
 	// Render column header
 	headerStyle := t.Renderer.NewStyle().
@@ -688,7 +870,7 @@ func (m Model) renderListWithHeader() string {
 	// Page info
 	totalItems := len(m.list.Items())
 	currentIdx := m.list.Index()
-	itemsPerPage := availableHeight - 1
+	itemsPerPage := availableHeight
 	if itemsPerPage < 1 {
 		itemsPerPage = 1
 	}
@@ -697,10 +879,14 @@ func (m Model) renderListWithHeader() string {
 	if totalPages < 1 {
 		totalPages = 1
 	}
-	startItem := (currentPage-1)*itemsPerPage + 1
-	endItem := startItem + itemsPerPage - 1
-	if endItem > totalItems {
-		endItem = totalItems
+	startItem := 0
+	endItem := 0
+	if totalItems > 0 {
+		startItem = (currentPage-1)*itemsPerPage + 1
+		endItem = startItem + itemsPerPage - 1
+		if endItem > totalItems {
+			endItem = totalItems
+		}
 	}
 
 	pageInfo := fmt.Sprintf(" Page %d of %d (items %d-%d of %d) ", currentPage, totalPages, startItem, endItem, totalItems)
@@ -736,22 +922,26 @@ func (m Model) renderSplitView() string {
 		detailStyle = FocusedPanelStyle
 	}
 
-	listWidth := m.list.Width()
-	panelHeight := m.height - 2
+	// m.list.Width() is the inner width (set in Update)
+	listInnerWidth := m.list.Width()
+	panelHeight := m.height - 1
 
 	// Create header row for list
 	headerStyle := t.Renderer.NewStyle().
 		Background(t.Primary).
 		Foreground(lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#282A36"}).
 		Bold(true).
-		Width(listWidth - 2)
+		Width(listInnerWidth)
 
 	header := headerStyle.Render("  TYPE PRI STATUS      ID                     TITLE")
 
 	// Page info for list
 	totalItems := len(m.list.Items())
 	currentIdx := m.list.Index()
-	listHeight := panelHeight - 3 // account for header and page indicator
+	listHeight := m.list.Height()
+	if listHeight == 0 {
+		listHeight = panelHeight - 3 // fallback
+	}
 	if listHeight < 1 {
 		listHeight = 1
 	}
@@ -760,28 +950,31 @@ func (m Model) renderSplitView() string {
 	if totalPages < 1 {
 		totalPages = 1
 	}
-	startItem := (currentPage-1)*listHeight + 1
-	endItem := startItem + listHeight - 1
-	if endItem > totalItems {
-		endItem = totalItems
-	}
-	if totalItems == 0 {
-		startItem = 0
-		endItem = 0
+	startItem := 0
+	endItem := 0
+	if totalItems > 0 {
+		startItem = (currentPage-1)*listHeight + 1
+		endItem = startItem + listHeight - 1
+		if endItem > totalItems {
+			endItem = totalItems
+		}
 	}
 
 	pageInfo := fmt.Sprintf("Page %d/%d (%d-%d of %d)", currentPage, totalPages, startItem, endItem, totalItems)
 	pageStyle := t.Renderer.NewStyle().
 		Foreground(t.Secondary).
-		Width(listWidth - 2).
+		Width(listInnerWidth).
 		Align(lipgloss.Center)
 
 	pageLine := pageStyle.Render(pageInfo)
 
 	// Combine header + list + page indicator
 	listContent := lipgloss.JoinVertical(lipgloss.Left, header, m.list.View(), pageLine)
-	listView := listStyle.Width(listWidth).Height(panelHeight).Render(listContent)
+	
+	// List Panel Width: Inner + 2 (Padding). Border adds another 2.
+	listView := listStyle.Width(listInnerWidth + 2).Height(panelHeight).Render(listContent)
 
+	// Detail Panel Width: Inner + 2 (Padding). Border adds another 2.
 	detailView := detailStyle.Width(m.viewport.Width + 2).Height(panelHeight).Render(m.viewport.View())
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, listView, detailView)
@@ -836,9 +1029,11 @@ func (m Model) renderHelpOverlay() string {
 	sb.WriteString(sectionStyle.Render("Views"))
 	sb.WriteString("\n")
 	views := []struct{ key, desc string }{
+		{"a", "Toggle Actionable view"},
 		{"b", "Toggle Kanban board"},
 		{"g", "Toggle Graph view"},
 		{"i", "Toggle Insights dashboard"},
+		{"R", "Open Recipe picker"},
 		{"?", "Toggle this help"},
 	}
 	for _, s := range views {
@@ -937,13 +1132,27 @@ func (m *Model) renderFooter() string {
 		filterTxt = "CLOSED"
 	case "ready":
 		filterTxt = "READY"
+	default:
+		// Check for recipe filter
+		if strings.HasPrefix(m.currentFilter, "recipe:") {
+			filterTxt = strings.ToUpper(m.currentFilter[7:]) // Strip "recipe:" prefix
+		} else {
+			filterTxt = m.currentFilter
+		}
 	}
 
 	status := fmt.Sprintf(" Filter: %s ", filterTxt)
 	count := fmt.Sprintf("%d issues", len(m.list.Items()))
 
-	// Stats block
-	stats := fmt.Sprintf(" Open:%d Ready:%d Blocked:%d Closed:%d ", m.countOpen, m.countReady, m.countBlocked, m.countClosed)
+	// Stats block - show diff stats if in time-travel mode
+	var stats string
+	if m.timeTravelMode && m.timeTravelDiff != nil {
+		d := m.timeTravelDiff.Summary
+		stats = fmt.Sprintf(" ⏱️ Since %s: +%d ✅%d ~%d ",
+			m.timeTravelSince, d.IssuesAdded, d.IssuesClosed, d.IssuesModified)
+	} else {
+		stats = fmt.Sprintf(" Open:%d Ready:%d Blocked:%d Closed:%d ", m.countOpen, m.countReady, m.countBlocked, m.countClosed)
+	}
 
 	// Update block
 	updateTxt := ""
@@ -954,22 +1163,28 @@ func (m *Model) renderFooter() string {
 	var keys string
 	if m.showHelp {
 		keys = "Press any key to close help"
+	} else if m.showRecipePicker {
+		keys = "j/k: nav • enter: apply • esc: cancel"
 	} else if m.focused == focusInsights {
 		keys = "h/l: panels • j/k: items • e: explain • x: calc • enter: jump • ?: help"
 	} else if m.isGraphView {
 		keys = "h/j/k/l: nav • H/L: scroll • enter: view • g: list • ?: help"
 	} else if m.isBoardView {
 		keys = "h/j/k/l: nav • G: bottom • enter: view • b: list • ?: help"
+	} else if m.isActionableView {
+		keys = "j/k: nav • enter: view • a: list • ?: help"
 	} else if m.list.FilterState() == list.Filtering {
 		keys = "esc: cancel • enter: select"
 	} else {
-		if m.isSplitView {
-			keys = "tab: focus • b: board • g: graph • i: insights • /: search • ?: help"
+		if m.timeTravelMode {
+			keys = "t: exit diff • R: recipe • a: action • b: board • g: graph • i: insights • p: prio • /: search • ?: help"
+		} else if m.isSplitView {
+			keys = "tab: focus • R: recipe • t: diff • a: action • b: board • g: graph • i: insights • p: prio • ?: help"
 		} else {
 			if m.showDetails {
 				keys = "esc: back • j/k: scroll • ?: help • q: back"
 			} else {
-				keys = "enter: details • b: board • g: graph • i: insights • /: search • ?: help"
+				keys = "enter: details • R: recipe • t: diff • a: action • b: board • g: graph • i: insights • p: prio • ?: help"
 			}
 		}
 	}
@@ -991,6 +1206,23 @@ func (m *Model) renderFooter() string {
 	filler := lipgloss.NewStyle().Background(ColorBgDark).Width(remaining).Render("")
 
 	return lipgloss.JoinHorizontal(lipgloss.Bottom, statusSection, updateSection, statsSection, filler, countSection, keysSection)
+}
+
+// getDiffStatus returns the diff status for an issue if time-travel mode is active
+func (m Model) getDiffStatus(id string) DiffStatus {
+	if !m.timeTravelMode {
+		return DiffStatusNone
+	}
+	if m.newIssueIDs[id] {
+		return DiffStatusNew
+	}
+	if m.closedIssueIDs[id] {
+		return DiffStatusClosed
+	}
+	if m.modifiedIssueIDs[id] {
+		return DiffStatusModified
+	}
+	return DiffStatusNone
 }
 
 func (m *Model) applyFilter() {
@@ -1028,6 +1260,7 @@ func (m *Model) applyFilter() {
 				Issue:      issue,
 				GraphScore: m.analysis.PageRank[issue.ID],
 				Impact:     m.analysis.CriticalPathScore[issue.ID],
+				DiffStatus: m.getDiffStatus(issue.ID),
 			})
 			filteredIssues = append(filteredIssues, issue)
 		}
@@ -1036,6 +1269,145 @@ func (m *Model) applyFilter() {
 	m.list.SetItems(filteredItems)
 	m.board.SetIssues(filteredIssues)
 	m.graphView.SetIssues(filteredIssues, nil) // nil insights since we use pre-computed
+
+	// Keep selection in bounds
+	if len(filteredItems) > 0 && m.list.Index() >= len(filteredItems) {
+		m.list.Select(0)
+	}
+	m.updateViewportContent()
+}
+
+// applyRecipe applies a recipe's filters and sort to the current view
+func (m *Model) applyRecipe(r *recipe.Recipe) {
+	if r == nil {
+		return
+	}
+
+	var filteredItems []list.Item
+	var filteredIssues []model.Issue
+
+	for _, issue := range m.issues {
+		include := true
+
+		// Apply status filter
+		if len(r.Filters.Status) > 0 {
+			statusMatch := false
+			for _, s := range r.Filters.Status {
+				if string(issue.Status) == s {
+					statusMatch = true
+					break
+				}
+			}
+			include = include && statusMatch
+		}
+
+		// Apply priority filter
+		if include && len(r.Filters.Priority) > 0 {
+			prioMatch := false
+			for _, p := range r.Filters.Priority {
+				if issue.Priority == p {
+					prioMatch = true
+					break
+				}
+			}
+			include = include && prioMatch
+		}
+
+		// Apply tags filter (must have ALL specified tags)
+		if include && len(r.Filters.Tags) > 0 {
+			labelSet := make(map[string]bool)
+			for _, l := range issue.Labels {
+				labelSet[l] = true
+			}
+			for _, required := range r.Filters.Tags {
+				if !labelSet[required] {
+					include = false
+					break
+				}
+			}
+		}
+
+		// Apply actionable filter
+		if include && r.Filters.Actionable != nil && *r.Filters.Actionable {
+			// Check if issue is blocked
+			isBlocked := false
+			for _, dep := range issue.Dependencies {
+				if dep.Type == model.DepBlocks {
+					if blocker, exists := m.issueMap[dep.DependsOnID]; exists && blocker.Status != model.StatusClosed {
+						isBlocked = true
+						break
+					}
+				}
+			}
+			include = !isBlocked
+		}
+
+		if include {
+			filteredItems = append(filteredItems, IssueItem{
+				Issue:      issue,
+				GraphScore: m.analysis.PageRank[issue.ID],
+				Impact:     m.analysis.CriticalPathScore[issue.ID],
+				DiffStatus: m.getDiffStatus(issue.ID),
+			})
+			filteredIssues = append(filteredIssues, issue)
+		}
+	}
+
+	// Apply sort
+	descending := r.Sort.Direction == "desc"
+	if r.Sort.Field != "" {
+		sort.Slice(filteredItems, func(i, j int) bool {
+			iItem := filteredItems[i].(IssueItem)
+			jItem := filteredItems[j].(IssueItem)
+			less := false
+
+			switch r.Sort.Field {
+			case "priority":
+				less = iItem.Issue.Priority < jItem.Issue.Priority
+			case "created", "created_at":
+				less = iItem.Issue.CreatedAt.Before(jItem.Issue.CreatedAt)
+			case "updated", "updated_at":
+				less = iItem.Issue.UpdatedAt.Before(jItem.Issue.UpdatedAt)
+			case "impact":
+				less = iItem.Impact > jItem.Impact
+			case "pagerank":
+				less = iItem.GraphScore > jItem.GraphScore
+			default:
+				less = iItem.Issue.Priority < jItem.Issue.Priority
+			}
+
+			if descending {
+				return !less
+			}
+			return less
+		})
+
+		// Re-sort issues list too
+		sort.Slice(filteredIssues, func(i, j int) bool {
+			less := false
+			switch r.Sort.Field {
+			case "priority":
+				less = filteredIssues[i].Priority < filteredIssues[j].Priority
+			case "created", "created_at":
+				less = filteredIssues[i].CreatedAt.Before(filteredIssues[j].CreatedAt)
+			case "updated", "updated_at":
+				less = filteredIssues[i].UpdatedAt.Before(filteredIssues[j].UpdatedAt)
+			default:
+				less = filteredIssues[i].Priority < filteredIssues[j].Priority
+			}
+			if descending {
+				return !less
+			}
+			return less
+		})
+	}
+
+	m.list.SetItems(filteredItems)
+	m.board.SetIssues(filteredIssues)
+	m.graphView.SetIssues(filteredIssues, nil)
+
+	// Update filter indicator
+	m.currentFilter = "recipe:" + r.Name
 
 	// Keep selection in bounds
 	if len(filteredItems) > 0 && m.list.Index() >= len(filteredItems) {
@@ -1169,4 +1541,81 @@ func (m Model) FilteredIssues() []model.Issue {
 		}
 	}
 	return issues
+}
+
+// enterTimeTravelMode loads historical data and computes diff
+func (m *Model) enterTimeTravelMode(revision string) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+
+	gitLoader := loader.NewGitLoader(cwd)
+
+	// Load historical issues
+	historicalIssues, err := gitLoader.LoadAt(revision)
+	if err != nil {
+		// Silently fail - git history may not be available
+		return
+	}
+
+	// Create snapshots and compute diff
+	fromSnapshot := analysis.NewSnapshot(historicalIssues)
+	toSnapshot := analysis.NewSnapshot(m.issues)
+	diff := analysis.CompareSnapshots(fromSnapshot, toSnapshot)
+
+	// Build lookup sets for badges
+	m.newIssueIDs = make(map[string]bool)
+	for _, issue := range diff.NewIssues {
+		m.newIssueIDs[issue.ID] = true
+	}
+
+	m.closedIssueIDs = make(map[string]bool)
+	for _, issue := range diff.ClosedIssues {
+		m.closedIssueIDs[issue.ID] = true
+	}
+
+	m.modifiedIssueIDs = make(map[string]bool)
+	for _, mod := range diff.ModifiedIssues {
+		m.modifiedIssueIDs[mod.IssueID] = true
+	}
+
+	m.timeTravelMode = true
+	m.timeTravelDiff = diff
+	m.timeTravelSince = revision
+
+	// Rebuild list items with diff info
+	m.rebuildListWithDiffInfo()
+}
+
+// exitTimeTravelMode clears time-travel state
+func (m *Model) exitTimeTravelMode() {
+	m.timeTravelMode = false
+	m.timeTravelDiff = nil
+	m.timeTravelSince = ""
+	m.newIssueIDs = nil
+	m.closedIssueIDs = nil
+	m.modifiedIssueIDs = nil
+
+	// Rebuild list without diff info
+	m.rebuildListWithDiffInfo()
+}
+
+// rebuildListWithDiffInfo recreates list items with current diff state
+func (m *Model) rebuildListWithDiffInfo() {
+	if m.activeRecipe != nil {
+		m.applyRecipe(m.activeRecipe)
+	} else {
+		m.applyFilter()
+	}
+}
+
+// IsTimeTravelMode returns whether time-travel mode is active
+func (m Model) IsTimeTravelMode() bool {
+	return m.timeTravelMode
+}
+
+// TimeTravelDiff returns the current diff (nil if not in time-travel mode)
+func (m Model) TimeTravelDiff() *analysis.SnapshotDiff {
+	return m.timeTravelDiff
 }

@@ -27,15 +27,19 @@ type Insights struct {
 
 // GenerateInsights translates raw stats into actionable data
 func (s GraphStats) GenerateInsights(limit int) Insights {
+	if limit <= 0 {
+		limit = len(s.PageRank) // use full set; maps all share same key set
+	}
+
 	return Insights{
-		Bottlenecks: getTopItems(s.Betweenness, limit),
-		Keystones:   getTopItems(s.CriticalPathScore, limit),
-		Influencers: getTopItems(s.Eigenvector, limit),
-		Hubs:        getTopItems(s.Hubs, limit),
-		Authorities: getTopItems(s.Authorities, limit),
-		Cycles:      s.Cycles,
+		Bottlenecks:    getTopItems(s.Betweenness, limit),
+		Keystones:      getTopItems(s.CriticalPathScore, limit),
+		Influencers:    getTopItems(s.Eigenvector, limit),
+		Hubs:           getTopItems(s.Hubs, limit),
+		Authorities:    getTopItems(s.Authorities, limit),
+		Cycles:         s.Cycles,
 		ClusterDensity: s.Density,
-		Stats:       &s,
+		Stats:          &s,
 	}
 }
 

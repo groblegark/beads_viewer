@@ -336,9 +336,12 @@ func (m *InsightsModel) renderMetricPanel(panel MetricPanel, width, height int, 
 	sb.WriteString("\n")
 
 	// Items list
-	visibleRows := height - 5
+	// Calculate visible rows more conservatively
+	// Header(1) + Subtitle(1) + Explain(2-3 lines typically) + Spacer(1) + Scroll(1) = ~7 lines overhead
+	visibleRows := height - 7
 	if m.showExplanations {
-		visibleRows -= 2
+		// Explanations can wrap, so give more buffer
+		visibleRows -= 1
 	}
 	if visibleRows < 3 {
 		visibleRows = 3

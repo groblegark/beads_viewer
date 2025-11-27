@@ -101,6 +101,12 @@ func (a *Analyzer) Analyze() GraphStats {
 		CriticalPathScore: make(map[string]float64),
 	}
 
+	// Handle empty graph - return empty stats without calling gonum functions
+	// that panic on zero-length matrices
+	if len(a.issueMap) == 0 {
+		return stats
+	}
+
 	nodes := a.g.Nodes()
 
 	// 1. Basic Degree Centrality
@@ -143,10 +149,13 @@ func (a *Analyzer) Analyze() GraphStats {
 	}
 
 	// 3c. HITS (hubs/authorities) captures dependency vs depended-on roles
-	hubAuth := network.HITS(a.g, 1e-8)
-	for id, ha := range hubAuth {
-		stats.Hubs[a.nodeToID[id]] = ha.Hub
-		stats.Authorities[a.nodeToID[id]] = ha.Authority
+	// Only run if graph has edges (HITS hangs on graphs with no edges)
+	if a.g.Edges().Len() > 0 {
+		hubAuth := network.HITS(a.g, 1e-4) // Higher tolerance for stability
+		for id, ha := range hubAuth {
+			stats.Hubs[a.nodeToID[id]] = ha.Hub
+			stats.Authorities[a.nodeToID[id]] = ha.Authority
+		}
 	}
 
 	// 4. Cycles
@@ -216,6 +225,97 @@ func (a *Analyzer) computeHeights(sorted []graph.Node) map[string]float64 {
 	}
 
 	return impactScores
+}
+
+// GetActionableIssues returns issues that can be worked on immediately.
+// An issue is actionable if:
+// 1. It is not closed
+// 2. All its blocking dependencies (type "blocks") are closed
+// Missing blockers don't block (graceful degradation).
+func (a *Analyzer) GetActionableIssues() []model.Issue {
+	var actionable []model.Issue
+
+	for _, issue := range a.issueMap {
+		// Skip closed issues - they're done
+		if issue.Status == model.StatusClosed {
+			continue
+		}
+
+		// Check all blocking dependencies
+		isBlocked := false
+		for _, dep := range issue.Dependencies {
+			// Only "blocks" type creates hard dependencies
+			if dep.Type != model.DepBlocks {
+				continue
+			}
+
+			// Look up the blocker
+			blocker, exists := a.issueMap[dep.DependsOnID]
+			if !exists {
+				// Missing blocker doesn't block (graceful degradation)
+				continue
+			}
+
+			// If blocker is not closed, this issue is blocked
+			if blocker.Status != model.StatusClosed {
+				isBlocked = true
+				break
+			}
+		}
+
+		if !isBlocked {
+			actionable = append(actionable, issue)
+		}
+	}
+
+	return actionable
+}
+
+// GetIssue returns a single issue by ID, or nil if not found
+func (a *Analyzer) GetIssue(id string) *model.Issue {
+	if issue, ok := a.issueMap[id]; ok {
+		return &issue
+	}
+	return nil
+}
+
+// GetBlockers returns the IDs of issues that block the given issue
+// (only considers "blocks" type dependencies)
+func (a *Analyzer) GetBlockers(issueID string) []string {
+	issue, ok := a.issueMap[issueID]
+	if !ok {
+		return nil
+	}
+
+	var blockers []string
+	for _, dep := range issue.Dependencies {
+		if dep.Type == model.DepBlocks {
+			if _, exists := a.issueMap[dep.DependsOnID]; exists {
+				blockers = append(blockers, dep.DependsOnID)
+			}
+		}
+	}
+	return blockers
+}
+
+// GetOpenBlockers returns the IDs of non-closed issues that block the given issue
+func (a *Analyzer) GetOpenBlockers(issueID string) []string {
+	issue, ok := a.issueMap[issueID]
+	if !ok {
+		return nil
+	}
+
+	var openBlockers []string
+	for _, dep := range issue.Dependencies {
+		if dep.Type == model.DepBlocks {
+			if blocker, exists := a.issueMap[dep.DependsOnID]; exists {
+				if blocker.Status != model.StatusClosed {
+					openBlockers = append(openBlockers, dep.DependsOnID)
+				}
+			}
+		}
+	}
+	return openBlockers
 }
 
 // computeEigenvector runs a simple power-iteration to estimate eigenvector centrality.
