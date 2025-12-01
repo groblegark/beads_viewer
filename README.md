@@ -36,7 +36,7 @@
 ### ⚡ Quick Install
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/github.com/Dicklesworthstone/beads_viewer/main/install.sh?$(date +%s)" | bash
+curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh?$(date +%s)" | bash
 ```
 
 ---
@@ -1378,7 +1378,7 @@ A: `bv` is data-agnostic. The Beads data schema supports an `external_ref` field
 The fastest way to get started. Detects your OS and architecture automatically.
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/github.com/Dicklesworthstone/beads_viewer/main/install.sh?$(date +%s)" | bash
+curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh?$(date +%s)" | bash
 ```
 
 ### Build from Source
