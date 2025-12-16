@@ -135,11 +135,11 @@ func stateFromTiming(enabled bool, timedOut bool) string {
 	}
 }
 
-func betweennessReason(cfg AnalysisConfig) string {
+func betweennessReason(cfg AnalysisConfig, isApprox bool) string {
 	if cfg.BetweennessSkipReason != "" {
 		return cfg.BetweennessSkipReason
 	}
-	if cfg.BetweennessMode == BetweennessApproximate {
+	if cfg.BetweennessMode == BetweennessApproximate || isApprox {
 		return "approximate"
 	}
 	return ""
@@ -860,7 +860,7 @@ func (a *Analyzer) computePhase2WithProfile(stats *GraphStats, config AnalysisCo
 		PageRank: statusEntry{State: stateFromTiming(config.ComputePageRank, profile.PageRankTO), MS: profile.PageRank},
 		Betweenness: statusEntry{
 			State:  stateFromTiming(config.ComputeBetweenness, profile.BetweennessTO),
-			Reason: betweennessReason(config),
+			Reason: betweennessReason(config, config.BetweennessIsApproximate),
 			Sample: config.BetweennessSampleSize,
 			MS:     profile.Betweenness,
 		},
