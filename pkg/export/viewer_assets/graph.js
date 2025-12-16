@@ -70,8 +70,23 @@ const VIEW_MODES = {
     FORCE: 'force',           // Standard force-directed
     HIERARCHY: 'hierarchy',   // Top-down tree layout
     RADIAL: 'radial',         // Radial tree from selected node
-    CLUSTER: 'cluster'        // Clustered by label/status
+    CLUSTER: 'cluster',       // Clustered by status
+    LABEL_GALAXY: 'label_galaxy' // Clustered by label ("galaxy" view)
 };
+
+// Label color palette (10 distinct colors, colorblind-friendly)
+const LABEL_COLORS = [
+    '#8BE9FD', // Cyan
+    '#50FA7B', // Green
+    '#FFB86C', // Orange
+    '#FF79C6', // Pink
+    '#BD93F9', // Purple
+    '#F1FA8C', // Yellow
+    '#FF5555', // Red
+    '#6272A4', // Comment (muted)
+    '#44475A', // Selection
+    '#F8F8F2'  // Foreground
+];
 
 // ============================================================================
 // STATE MANAGEMENT
@@ -151,6 +166,182 @@ class GraphStore {
 }
 
 const store = new GraphStore();
+
+// ============================================================================
+// LABEL CLUSTERING STATE
+// ============================================================================
+
+const labelClusterState = {
+    active: false,
+    labels: [],                    // Unique labels in dataset
+    labelColorMap: new Map(),      // label -> color
+    labelCenters: new Map(),       // label -> {x, y} center position
+    clusterHulls: new Map(),       // label -> hull points array
+    showHulls: true,
+    showLegend: true,
+    crossLabelEdges: new Set()     // Set of edge IDs crossing label boundaries
+};
+
+/**
+ * Build label color map and compute cluster centers
+ */
+function buildLabelColorMap() {
+    labelClusterState.labelColorMap.clear();
+    labelClusterState.labelCenters.clear();
+
+    // Collect all unique labels
+    const labelSet = new Set();
+    store.issues.forEach(issue => {
+        (issue.labels || []).forEach(label => labelSet.add(label));
+    });
+
+    // Add "unlabeled" for issues without labels
+    labelSet.add('(unlabeled)');
+
+    labelClusterState.labels = [...labelSet].sort();
+
+    // Assign colors
+    labelClusterState.labels.forEach((label, i) => {
+        labelClusterState.labelColorMap.set(label, LABEL_COLORS[i % LABEL_COLORS.length]);
+    });
+
+    // Compute initial cluster centers in a circle
+    const numLabels = labelClusterState.labels.length;
+    const radius = Math.max(200, numLabels * 30);
+    labelClusterState.labels.forEach((label, i) => {
+        const angle = (2 * Math.PI * i) / numLabels - Math.PI / 2; // Start from top
+        labelClusterState.labelCenters.set(label, {
+            x: Math.cos(angle) * radius,
+            y: Math.sin(angle) * radius
+        });
+    });
+
+    return labelClusterState.labelColorMap;
+}
+
+/**
+ * Get the primary label for a node (first label or 'unlabeled')
+ */
+function getPrimaryLabel(node) {
+    return (node.labels && node.labels.length > 0) ? node.labels[0] : '(unlabeled)';
+}
+
+/**
+ * Get the color for a node based on its primary label
+ */
+function getLabelColor(node) {
+    const label = getPrimaryLabel(node);
+    return labelClusterState.labelColorMap.get(label) || LABEL_COLORS[0];
+}
+
+/**
+ * Check if an edge crosses label boundaries
+ */
+function isCrossLabelEdge(link) {
+    const sourceNode = typeof link.source === 'object' ? link.source : store.nodeMap.get(link.source);
+    const targetNode = typeof link.target === 'object' ? link.target : store.nodeMap.get(link.target);
+
+    if (!sourceNode || !targetNode) return false;
+
+    const sourceLabel = getPrimaryLabel(sourceNode);
+    const targetLabel = getPrimaryLabel(targetNode);
+
+    return sourceLabel !== targetLabel;
+}
+
+/**
+ * Compute convex hulls for each label cluster
+ */
+function computeClusterHulls() {
+    if (!store.graph) return;
+
+    labelClusterState.clusterHulls.clear();
+    const graphData = store.graph.graphData();
+
+    // Group nodes by primary label
+    const labelGroups = new Map();
+    graphData.nodes.forEach(node => {
+        const label = getPrimaryLabel(node);
+        if (!labelGroups.has(label)) {
+            labelGroups.set(label, []);
+        }
+        labelGroups.get(label).push([node.x, node.y]);
+    });
+
+    // Compute hull for each group with 3+ nodes
+    labelGroups.forEach((points, label) => {
+        if (points.length >= 3) {
+            // Use d3.polygonHull for convex hull computation
+            const hull = d3.polygonHull(points);
+            if (hull) {
+                labelClusterState.clusterHulls.set(label, hull);
+            }
+        } else if (points.length > 0) {
+            // For 1-2 nodes, just store the points
+            labelClusterState.clusterHulls.set(label, points);
+        }
+    });
+
+    return labelClusterState.clusterHulls;
+}
+
+/**
+ * Draw cluster hulls on the canvas (bv-qpt0)
+ * Called during onRenderFramePre to draw behind nodes
+ */
+function drawClusterHulls(ctx, globalScale) {
+    // Recompute hulls if needed (layout may have changed)
+    computeClusterHulls();
+
+    labelClusterState.clusterHulls.forEach((hull, label) => {
+        if (!hull || hull.length < 3) return;
+
+        const color = labelClusterState.labelColorMap.get(label) || LABEL_COLORS[0];
+
+        ctx.save();
+
+        // Draw semi-transparent filled hull
+        ctx.beginPath();
+        ctx.moveTo(hull[0][0], hull[0][1]);
+        for (let i = 1; i < hull.length; i++) {
+            ctx.lineTo(hull[i][0], hull[i][1]);
+        }
+        ctx.closePath();
+
+        // Fill with label color at low opacity
+        ctx.fillStyle = color + '15'; // ~8% opacity
+        ctx.fill();
+
+        // Draw hull border
+        ctx.strokeStyle = color + '40'; // ~25% opacity
+        ctx.lineWidth = Math.max(1, 2 / globalScale);
+        ctx.setLineDash([5 / globalScale, 5 / globalScale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Draw label name at cluster center (when zoomed out enough)
+        if (globalScale < 0.8 && hull.length >= 3) {
+            // Compute centroid
+            let cx = 0, cy = 0;
+            hull.forEach(point => {
+                cx += point[0];
+                cy += point[1];
+            });
+            cx /= hull.length;
+            cy /= hull.length;
+
+            // Draw label text
+            const fontSize = Math.max(12, 16 / globalScale);
+            ctx.font = `bold ${fontSize}px 'JetBrains Mono', monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = color + 'aa'; // ~67% opacity
+            ctx.fillText(label, cx, cy);
+        }
+
+        ctx.restore();
+    });
+}
 
 // ============================================================================
 // WASM INTEGRATION
@@ -310,7 +501,14 @@ export async function initGraph(containerId, options = {}) {
         .onZoom(handleZoom)
 
         // Background
-        .backgroundColor(THEME.bg);
+        .backgroundColor(THEME.bg)
+
+        // Custom rendering for cluster hulls (bv-qpt0)
+        .onRenderFramePre((ctx, globalScale) => {
+            if (labelClusterState.active && labelClusterState.showHulls) {
+                drawClusterHulls(ctx, globalScale);
+            }
+        });
 
     // Setup keyboard shortcuts
     setupKeyboardShortcuts();
@@ -341,6 +539,9 @@ export function loadData(issues, dependencies) {
         buildWasmGraph();
         computeMetrics();
     }
+
+    // Build label color map for galaxy view
+    buildLabelColorMap();
 
     // Prepare graph data
     const graphData = prepareGraphData();
@@ -484,6 +685,11 @@ function getNodeColor(node) {
 
     // Selected node
     if (store.selectedNode?.id === node.id) return THEME.accent.purple;
+
+    // Label galaxy mode: color by label
+    if (labelClusterState.active) {
+        return getLabelColor(node);
+    }
 
     // Status-based color
     return THEME.status[node.status] || THEME.status.open;
@@ -638,6 +844,11 @@ function getLinkColor(link) {
 
     // Cycle links
     if (sourceNode?.inCycle && targetNode?.inCycle) return THEME.link.cycle;
+
+    // Cross-label edges in galaxy view (bv-qpt0)
+    if (labelClusterState.active && isCrossLabelEdge(link)) {
+        return THEME.accent.pink; // Distinct color for cross-label dependencies
+    }
 
     return THEME.link.default;
 }
@@ -1621,6 +1832,11 @@ export function resetView() {
 export function setViewMode(mode) {
     store.viewMode = mode;
 
+    // Deactivate galaxy mode if switching away from it
+    if (mode !== VIEW_MODES.LABEL_GALAXY && labelClusterState.active) {
+        deactivateLabelGalaxy();
+    }
+
     // Apply layout forces based on mode
     switch (mode) {
         case VIEW_MODES.HIERARCHY:
@@ -1632,11 +1848,25 @@ export function setViewMode(mode) {
         case VIEW_MODES.CLUSTER:
             applyClusterLayout();
             break;
+        case VIEW_MODES.LABEL_GALAXY:
+            applyLabelGalaxyLayout();
+            break;
         default:
             applyForceLayout();
     }
 
     dispatchEvent('viewModeChange', { mode });
+}
+
+/**
+ * Deactivate label galaxy mode (bv-qpt0)
+ */
+function deactivateLabelGalaxy() {
+    labelClusterState.active = false;
+    labelClusterState.clusterHulls.clear();
+    hideLabelLegend();
+    store.graph?.refresh();
+    dispatchEvent('labelGalaxyDeactivated');
 }
 
 function applyForceLayout() {
@@ -1686,6 +1916,49 @@ function applyClusterLayout() {
         .d3ReheatSimulation();
 }
 
+/**
+ * Apply label-based galaxy layout (bv-qpt0)
+ * Groups nodes by their primary label into distinct clusters
+ */
+function applyLabelGalaxyLayout() {
+    // Build label colors and centers if not already done
+    if (labelClusterState.labelColorMap.size === 0) {
+        buildLabelColorMap();
+    }
+
+    labelClusterState.active = true;
+
+    // Apply forces to pull nodes toward their label's center
+    store.graph
+        .d3Force('x', d3.forceX(node => {
+            const label = getPrimaryLabel(node);
+            const center = labelClusterState.labelCenters.get(label);
+            return center ? center.x : 0;
+        }).strength(0.4))
+        .d3Force('y', d3.forceY(node => {
+            const label = getPrimaryLabel(node);
+            const center = labelClusterState.labelCenters.get(label);
+            return center ? center.y : 0;
+        }).strength(0.4))
+        .d3Force('charge', d3.forceManyBody().strength(-40))
+        .d3Force('collision', d3.forceCollide().radius(node => getNodeSize(node) + 8))
+        .d3ReheatSimulation();
+
+    // Show label legend
+    showLabelLegend();
+
+    // Schedule hull computation after layout settles
+    setTimeout(() => {
+        computeClusterHulls();
+        store.graph.refresh();
+    }, 1000);
+
+    dispatchEvent('labelGalaxyActivated', {
+        labels: labelClusterState.labels,
+        colorMap: Object.fromEntries(labelClusterState.labelColorMap)
+    });
+}
+
 // ============================================================================
 // KEYBOARD SHORTCUTS
 // ============================================================================
@@ -1731,6 +2004,9 @@ function setupKeyboardShortcuts() {
                 break;
             case '4':
                 setViewMode(VIEW_MODES.CLUSTER);
+                break;
+            case '5':
+                setViewMode(VIEW_MODES.LABEL_GALAXY);
                 break;
             case 'c':
                 toggleCriticalPath();
@@ -1843,6 +2119,166 @@ function hideTooltip() {
 }
 
 // ============================================================================
+// LABEL LEGEND (bv-qpt0)
+// ============================================================================
+
+let labelLegendEl = null;
+
+/**
+ * Show the label legend for galaxy view
+ */
+function showLabelLegend() {
+    if (!labelClusterState.showLegend) return;
+
+    // Remove existing legend if any
+    hideLabelLegend();
+
+    labelLegendEl = document.createElement('div');
+    labelLegendEl.className = 'bv-label-legend';
+    labelLegendEl.style.cssText = `
+        position: fixed;
+        top: 60px;
+        right: 16px;
+        background: ${THEME.bgSecondary}ee;
+        color: ${THEME.fg};
+        padding: 12px 16px;
+        border-radius: 8px;
+        border: 1px solid ${THEME.accent.purple};
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        max-height: calc(100vh - 120px);
+        overflow-y: auto;
+        z-index: 900;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+        backdrop-filter: blur(8px);
+    `;
+
+    const title = document.createElement('div');
+    title.style.cssText = `
+        font-weight: 600;
+        margin-bottom: 10px;
+        color: ${THEME.accent.cyan};
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    `;
+    title.innerHTML = `
+        <span>Labels</span>
+        <span style="cursor: pointer; opacity: 0.6;" onclick="window.bvGraph?.hideLabelLegend()">×</span>
+    `;
+    labelLegendEl.appendChild(title);
+
+    // Add label items
+    labelClusterState.labels.forEach(label => {
+        const color = labelClusterState.labelColorMap.get(label);
+        const item = document.createElement('div');
+        item.style.cssText = `
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.15s;
+        `;
+        item.innerHTML = `
+            <span style="width: 12px; height: 12px; border-radius: 50%; background: ${color}; flex-shrink: 0;"></span>
+            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(label)}</span>
+            <span style="opacity: 0.5; font-size: 10px;">${countNodesWithLabel(label)}</span>
+        `;
+
+        // Hover effect
+        item.addEventListener('mouseenter', () => {
+            item.style.background = THEME.bgTertiary;
+        });
+        item.addEventListener('mouseleave', () => {
+            item.style.background = 'transparent';
+        });
+
+        // Click to filter
+        item.addEventListener('click', () => {
+            if (labelClusterState.activeLabel === label) {
+                // Clear filter
+                labelClusterState.activeLabel = null;
+                clearFilters();
+            } else {
+                // Filter to this label
+                labelClusterState.activeLabel = label;
+                if (label === '(unlabeled)') {
+                    // Filter to issues with no labels
+                    setFilter('labels', []);
+                    // Custom filter for unlabeled
+                    const graphData = prepareGraphData();
+                    const filteredNodes = graphData.nodes.filter(n => !n.labels || n.labels.length === 0);
+                    highlightNodes(filteredNodes.map(n => n.id));
+                } else {
+                    setFilter('labels', [label]);
+                }
+            }
+        });
+
+        labelLegendEl.appendChild(item);
+    });
+
+    // Add keyboard hint
+    const hint = document.createElement('div');
+    hint.style.cssText = `
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid ${THEME.bgTertiary};
+        color: ${THEME.fgMuted};
+        font-size: 10px;
+    `;
+    hint.textContent = 'Press 5 to toggle galaxy view';
+    labelLegendEl.appendChild(hint);
+
+    document.body.appendChild(labelLegendEl);
+}
+
+/**
+ * Hide the label legend
+ */
+function hideLabelLegend() {
+    if (labelLegendEl) {
+        labelLegendEl.remove();
+        labelLegendEl = null;
+    }
+    labelClusterState.activeLabel = null;
+}
+
+/**
+ * Count nodes with a specific label
+ */
+function countNodesWithLabel(label) {
+    if (!store.graph) return 0;
+    const graphData = store.graph.graphData();
+    return graphData.nodes.filter(n => {
+        if (label === '(unlabeled)') {
+            return !n.labels || n.labels.length === 0;
+        }
+        return n.labels && n.labels.includes(label);
+    }).length;
+}
+
+/**
+ * Toggle label legend visibility
+ */
+export function toggleLabelLegend() {
+    if (labelLegendEl) {
+        hideLabelLegend();
+    } else {
+        showLabelLegend();
+    }
+}
+
+// Expose hideLabelLegend globally for the close button
+if (typeof window !== 'undefined') {
+    window.bvGraph = window.bvGraph || {};
+    window.bvGraph.hideLabelLegend = hideLabelLegend;
+}
+
+// ============================================================================
 // UTILITIES
 // ============================================================================
 
@@ -1939,5 +2375,24 @@ export {
     getCycleNavigatorState
 };
 
+// Export label galaxy functions (bv-qpt0)
+export {
+    toggleLabelLegend,
+    getLabelColor,
+    getPrimaryLabel
+};
+
+/**
+ * Get label cluster state for external access
+ */
+export function getLabelClusterState() {
+    return {
+        active: labelClusterState.active,
+        labels: [...labelClusterState.labels],
+        colorMap: Object.fromEntries(labelClusterState.labelColorMap),
+        activeLabel: labelClusterState.activeLabel
+    };
+}
+
 // Export constants
-export { THEME, VIEW_MODES, TYPE_ICONS };
+export { THEME, VIEW_MODES, TYPE_ICONS, LABEL_COLORS };
