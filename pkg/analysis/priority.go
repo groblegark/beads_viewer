@@ -3,6 +3,7 @@ package analysis
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
@@ -20,11 +21,14 @@ type ImpactScore struct {
 
 // ScoreBreakdown shows the weighted contribution of each component
 type ScoreBreakdown struct {
-	PageRank      float64 `json:"pagerank"`       // 0.30 weight
-	Betweenness   float64 `json:"betweenness"`    // 0.30 weight
-	BlockerRatio  float64 `json:"blocker_ratio"`  // 0.20 weight
-	Staleness     float64 `json:"staleness"`      // 0.10 weight
+	PageRank      float64 `json:"pagerank"`       // 0.22 weight
+	Betweenness   float64 `json:"betweenness"`    // 0.20 weight
+	BlockerRatio  float64 `json:"blocker_ratio"`  // 0.13 weight
+	Staleness     float64 `json:"staleness"`      // 0.05 weight
 	PriorityBoost float64 `json:"priority_boost"` // 0.10 weight
+	TimeToImpact  float64 `json:"time_to_impact"` // 0.10 weight - critical path depth + estimated time
+	Urgency       float64 `json:"urgency"`        // 0.10 weight - urgent labels + decay
+	Risk          float64 `json:"risk"`           // 0.10 weight - volatility/risk signals (bv-82)
 
 	// Raw normalized values (before weighting)
 	PageRankNorm      float64 `json:"pagerank_norm"`
@@ -32,16 +36,42 @@ type ScoreBreakdown struct {
 	BlockerRatioNorm  float64 `json:"blocker_ratio_norm"`
 	StalenessNorm     float64 `json:"staleness_norm"`
 	PriorityBoostNorm float64 `json:"priority_boost_norm"`
+	TimeToImpactNorm  float64 `json:"time_to_impact_norm"`
+	UrgencyNorm       float64 `json:"urgency_norm"`
+	RiskNorm          float64 `json:"risk_norm"`
+
+	// Explanation text for signals
+	TimeToImpactExplanation string `json:"time_to_impact_explanation,omitempty"`
+	UrgencyExplanation      string `json:"urgency_explanation,omitempty"`
+	RiskExplanation         string `json:"risk_explanation,omitempty"`
+
+	// Detailed risk signals (bv-82)
+	RiskSignals *RiskSignals `json:"risk_signals,omitempty"`
 }
 
-// Weights for composite score
+// Weights for composite score (total = 1.0)
 const (
-	WeightPageRank      = 0.30
-	WeightBetweenness   = 0.30
-	WeightBlockerRatio  = 0.20
-	WeightStaleness     = 0.10
-	WeightPriorityBoost = 0.10
+	WeightPageRank      = 0.22 // Fundamental dependency importance
+	WeightBetweenness   = 0.20 // Bottleneck/bridging importance
+	WeightBlockerRatio  = 0.13 // Direct blocking count
+	WeightStaleness     = 0.05 // Age-based surfacing (reduced)
+	WeightPriorityBoost = 0.10 // Explicit priority
+	WeightTimeToImpact  = 0.10 // Time-based urgency from depth + estimates
+	WeightUrgency       = 0.10 // Label-based urgency + decay
+	WeightRisk          = 0.10 // Volatility/risk signals (bv-82)
 )
+
+// UrgencyLabels are labels that indicate high urgency
+var UrgencyLabels = []string{"urgent", "critical", "blocker", "hotfix", "asap"}
+
+// DefaultEstimatedMinutes is used when no estimate is provided
+const DefaultEstimatedMinutes = 60
+
+// MaxCriticalPathDepth caps the critical path depth for normalization
+const MaxCriticalPathDepth = 10.0
+
+// UrgencyDecayDays is the half-life for urgency decay (after this many days, urgency doubles)
+const UrgencyDecayDays = 7.0
 
 // ComputeImpactScores calculates impact scores for all open issues
 func (a *Analyzer) ComputeImpactScores() []ImpactScore {
@@ -60,11 +90,15 @@ func (a *Analyzer) ComputeImpactScoresAt(now time.Time) []ImpactScore {
 	// Get thread-safe copies of Phase 2 data
 	pageRank := stats.PageRank()
 	betweenness := stats.Betweenness()
+	criticalPath := stats.CriticalPathScore()
 
 	// Find max values for normalization
 	maxPR := findMax(pageRank)
 	maxBW := findMax(betweenness)
 	maxBlockers := findMaxInt(stats.InDegree)
+
+	// Compute median estimated minutes for issues without estimates
+	medianMinutes := a.computeMedianEstimatedMinutes()
 
 	var scores []ImpactScore
 
@@ -81,6 +115,19 @@ func (a *Analyzer) ComputeImpactScoresAt(now time.Time) []ImpactScore {
 		stalenessNorm := computeStaleness(issue.UpdatedAt, now)
 		priorityNorm := computePriorityBoost(issue.Priority)
 
+		// Compute time-to-impact signal
+		timeToImpactNorm, timeToImpactExplanation := computeTimeToImpact(
+			criticalPath[id],
+			issue.EstimatedMinutes,
+			medianMinutes,
+		)
+
+		// Compute urgency signal
+		urgencyNorm, urgencyExplanation := computeUrgency(&issue, now)
+
+		// Compute risk signals (bv-82)
+		riskSignals := ComputeRiskSignals(&issue, stats, a.issueMap, now)
+
 		// Compute weighted score
 		breakdown := ScoreBreakdown{
 			PageRank:      prNorm * WeightPageRank,
@@ -88,19 +135,34 @@ func (a *Analyzer) ComputeImpactScoresAt(now time.Time) []ImpactScore {
 			BlockerRatio:  blockerNorm * WeightBlockerRatio,
 			Staleness:     stalenessNorm * WeightStaleness,
 			PriorityBoost: priorityNorm * WeightPriorityBoost,
+			TimeToImpact:  timeToImpactNorm * WeightTimeToImpact,
+			Urgency:       urgencyNorm * WeightUrgency,
+			Risk:          riskSignals.CompositeRisk * WeightRisk,
 
 			PageRankNorm:      prNorm,
 			BetweennessNorm:   bwNorm,
 			BlockerRatioNorm:  blockerNorm,
 			StalenessNorm:     stalenessNorm,
 			PriorityBoostNorm: priorityNorm,
+			TimeToImpactNorm:  timeToImpactNorm,
+			UrgencyNorm:       urgencyNorm,
+			RiskNorm:          riskSignals.CompositeRisk,
+
+			TimeToImpactExplanation: timeToImpactExplanation,
+			UrgencyExplanation:      urgencyExplanation,
+			RiskExplanation:         riskSignals.Explanation,
+
+			RiskSignals: &riskSignals,
 		}
 
 		score := breakdown.PageRank +
 			breakdown.Betweenness +
 			breakdown.BlockerRatio +
 			breakdown.Staleness +
-			breakdown.PriorityBoost
+			breakdown.PriorityBoost +
+			breakdown.TimeToImpact +
+			breakdown.Urgency +
+			breakdown.Risk
 
 		scores = append(scores, ImpactScore{
 			IssueID:   id,
@@ -220,6 +282,163 @@ func findMaxInt(m map[string]int) int {
 	return max
 }
 
+// computeMedianEstimatedMinutes calculates the median estimated_minutes across all issues
+func (a *Analyzer) computeMedianEstimatedMinutes() int {
+	var estimates []int
+	for _, issue := range a.issueMap {
+		if issue.EstimatedMinutes != nil && *issue.EstimatedMinutes > 0 {
+			estimates = append(estimates, *issue.EstimatedMinutes)
+		}
+	}
+
+	if len(estimates) == 0 {
+		return DefaultEstimatedMinutes
+	}
+
+	sort.Ints(estimates)
+	mid := len(estimates) / 2
+	if len(estimates)%2 == 0 {
+		return (estimates[mid-1] + estimates[mid]) / 2
+	}
+	return estimates[mid]
+}
+
+// computeTimeToImpact calculates a normalized time-to-impact score
+// based on critical path depth and estimated completion time.
+// Returns a 0-1 score where higher means faster/higher impact.
+func computeTimeToImpact(criticalPathDepth float64, estimatedMinutes *int, medianMinutes int) (float64, string) {
+	// Get effective estimate
+	effectiveMinutes := medianMinutes
+	estimateSource := "median"
+	if estimatedMinutes != nil && *estimatedMinutes > 0 {
+		effectiveMinutes = *estimatedMinutes
+		estimateSource = "explicit"
+	}
+
+	// Compute depth factor (0-1, higher depth = more impact when completed)
+	// Cap at MaxCriticalPathDepth to avoid extreme values
+	depthNorm := criticalPathDepth / MaxCriticalPathDepth
+	if depthNorm > 1.0 {
+		depthNorm = 1.0
+	}
+
+	// Compute time factor (0-1, shorter time = faster impact)
+	// Normalize against 8-hour workday (480 minutes) as baseline
+	const maxMinutes = 480.0
+	timeFactor := 1.0 - (float64(effectiveMinutes) / maxMinutes)
+	if timeFactor < 0 {
+		timeFactor = 0
+	}
+	if timeFactor > 1 {
+		timeFactor = 1
+	}
+
+	// Combined score: weight depth more heavily since it represents structural importance
+	// Depth contributes 70%, time efficiency contributes 30%
+	score := depthNorm*0.7 + timeFactor*0.3
+
+	// Generate explanation
+	var explanation string
+	if criticalPathDepth >= 3 {
+		explanation = fmt.Sprintf("Deep in critical path (depth %.0f), %s estimate %dm", criticalPathDepth, estimateSource, effectiveMinutes)
+	} else if criticalPathDepth >= 1 {
+		explanation = fmt.Sprintf("On dependency chain (depth %.0f), %s estimate %dm", criticalPathDepth, estimateSource, effectiveMinutes)
+	} else {
+		explanation = fmt.Sprintf("Leaf node, %s estimate %dm", estimateSource, effectiveMinutes)
+	}
+
+	return score, explanation
+}
+
+// computeUrgency calculates a normalized urgency score based on labels and time decay.
+// Returns a 0-1 score where higher means more urgent.
+func computeUrgency(issue *model.Issue, now time.Time) (float64, string) {
+	var score float64
+	var reasons []string
+
+	// Check for urgency labels
+	urgentLabelFound := ""
+	for _, label := range issue.Labels {
+		lowerLabel := strings.ToLower(label)
+		for _, urgentLabel := range UrgencyLabels {
+			if strings.Contains(lowerLabel, urgentLabel) {
+				urgentLabelFound = label
+				// Different labels have different urgency weights
+				switch urgentLabel {
+				case "critical", "blocker":
+					score += 1.0
+				case "urgent", "hotfix":
+					score += 0.8
+				case "asap":
+					score += 0.6
+				}
+				break
+			}
+		}
+		if urgentLabelFound != "" {
+			break
+		}
+	}
+
+	if urgentLabelFound != "" {
+		reasons = append(reasons, fmt.Sprintf("has '%s' label", urgentLabelFound))
+	}
+
+	// Apply time decay: urgency increases as issue ages without resolution
+	// Uses exponential growth with half-life of UrgencyDecayDays
+	daysSinceCreated := now.Sub(issue.CreatedAt).Hours() / 24
+	if daysSinceCreated > 0 {
+		// Decay factor: 0.0 at creation, grows toward 0.5 max contribution
+		// Formula: 0.5 * (1 - e^(-days/halfLife))
+		decayFactor := 0.5 * (1.0 - exp(-daysSinceCreated/UrgencyDecayDays))
+		score += decayFactor
+
+		if daysSinceCreated >= 14 {
+			reasons = append(reasons, fmt.Sprintf("aging (%.0f days)", daysSinceCreated))
+		}
+	}
+
+	// Cap at 1.0
+	if score > 1.0 {
+		score = 1.0
+	}
+
+	// Build explanation
+	explanation := ""
+	if len(reasons) > 0 {
+		explanation = strings.Join(reasons, ", ")
+	} else if score > 0.1 {
+		explanation = "moderate time pressure"
+	}
+
+	return score, explanation
+}
+
+// exp returns e^x (simple approximation for small values, exact for common cases)
+func exp(x float64) float64 {
+	// Use math.Exp equivalent approximation
+	// For the decay calculation, we can use a simple Taylor series approximation
+	// e^x ≈ 1 + x + x²/2 + x³/6 for small |x|
+	if x > 10 {
+		return 22026.0 // e^10
+	}
+	if x < -10 {
+		return 0.0
+	}
+
+	// For better accuracy, use iterative calculation
+	result := 1.0
+	term := 1.0
+	for i := 1; i <= 20; i++ {
+		term *= x / float64(i)
+		result += term
+		if term < 1e-10 && term > -1e-10 {
+			break
+		}
+	}
+	return result
+}
+
 // PriorityRecommendation represents a suggested priority change
 type PriorityRecommendation struct {
 	IssueID           string   `json:"issue_id"`
@@ -336,6 +555,28 @@ func generateRecommendation(score ImpactScore, unblocksCount int, thresholds Rec
 		signalStrength += 0.2
 	}
 
+	// Check time-to-impact signal
+	if score.Breakdown.TimeToImpactNorm > 0.5 {
+		if score.Breakdown.TimeToImpactExplanation != "" {
+			reasoning = append(reasoning, score.Breakdown.TimeToImpactExplanation)
+		} else {
+			reasoning = append(reasoning, "High time-to-impact score")
+		}
+		signals++
+		signalStrength += score.Breakdown.TimeToImpactNorm
+	}
+
+	// Check urgency signal
+	if score.Breakdown.UrgencyNorm > 0.3 {
+		if score.Breakdown.UrgencyExplanation != "" {
+			reasoning = append(reasoning, score.Breakdown.UrgencyExplanation)
+		} else {
+			reasoning = append(reasoning, "Elevated urgency")
+		}
+		signals++
+		signalStrength += score.Breakdown.UrgencyNorm
+	}
+
 	// No signals = no recommendation needed
 	if signals == 0 {
 		return nil
@@ -404,8 +645,8 @@ func priorityToScore(priority int) float64 {
 
 // calculateConfidence determines how confident we are in the recommendation
 func calculateConfidence(signals int, strength float64, scoreDelta float64, thresholds RecommendationThresholds) float64 {
-	// Base confidence from number of signals
-	signalConfidence := float64(signals) / 4.0 // Max 4 signals
+	// Base confidence from number of signals (max 6: PageRank, Betweenness, unblocks, staleness, time-to-impact, urgency)
+	signalConfidence := float64(signals) / 6.0
 	if signalConfidence > 1.0 {
 		signalConfidence = 1.0
 	}

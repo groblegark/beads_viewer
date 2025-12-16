@@ -244,7 +244,10 @@ func TestScoreBreakdownWeights(t *testing.T) {
 		analysis.WeightBetweenness +
 		analysis.WeightBlockerRatio +
 		analysis.WeightStaleness +
-		analysis.WeightPriorityBoost
+		analysis.WeightPriorityBoost +
+		analysis.WeightTimeToImpact +
+		analysis.WeightUrgency +
+		analysis.WeightRisk
 
 	if totalWeight != 1.0 {
 		t.Errorf("Weights should sum to 1.0, got %f", totalWeight)
@@ -443,6 +446,129 @@ func TestRecommendationDirection(t *testing.T) {
 				t.Errorf("Expected direction 'increase' for low priority blocker, got %s", rec.Direction)
 			}
 			break
+		}
+	}
+}
+
+func TestComputeImpactScoresTimeToImpact(t *testing.T) {
+	// Test time-to-impact signal based on critical path depth and estimated minutes
+	now := time.Now()
+	est30 := 30
+	est480 := 480
+
+	// Chain: root <- mid <- leaf (deep dependency chain gives higher time-to-impact)
+	issues := []model.Issue{
+		{ID: "root", Title: "Root (Deep)", Status: model.StatusOpen, Priority: 2, UpdatedAt: now, EstimatedMinutes: &est30},
+		{ID: "mid", Title: "Middle", Status: model.StatusOpen, Priority: 2, UpdatedAt: now, EstimatedMinutes: &est480, Dependencies: []*model.Dependency{
+			{DependsOnID: "root", Type: model.DepBlocks},
+		}},
+		{ID: "leaf", Title: "Leaf (No deps)", Status: model.StatusOpen, Priority: 2, UpdatedAt: now},
+	}
+
+	an := analysis.NewAnalyzer(issues)
+	scores := an.ComputeImpactScoresAt(now)
+
+	scoreMap := make(map[string]analysis.ImpactScore)
+	for _, s := range scores {
+		scoreMap[s.IssueID] = s
+	}
+
+	// Root is deep in dependency chain (others depend on it transitively)
+	// Should have high time-to-impact due to critical path depth
+	if scoreMap["root"].Breakdown.TimeToImpactNorm == 0 {
+		t.Error("Root should have non-zero time-to-impact (it's blocking others)")
+	}
+
+	// Verify explanation is populated
+	if scoreMap["root"].Breakdown.TimeToImpactExplanation == "" {
+		t.Error("TimeToImpactExplanation should be populated")
+	}
+}
+
+func TestComputeImpactScoresUrgency(t *testing.T) {
+	// Test urgency signal based on labels and time decay
+	now := time.Now()
+
+	issues := []model.Issue{
+		{ID: "urgent", Title: "Urgent Issue", Status: model.StatusOpen, Priority: 2, UpdatedAt: now, CreatedAt: now, Labels: []string{"urgent", "backend"}},
+		{ID: "critical", Title: "Critical Issue", Status: model.StatusOpen, Priority: 2, UpdatedAt: now, CreatedAt: now, Labels: []string{"critical"}},
+		{ID: "normal", Title: "Normal Issue", Status: model.StatusOpen, Priority: 2, UpdatedAt: now, CreatedAt: now, Labels: []string{"feature"}},
+		{ID: "old", Title: "Old Issue", Status: model.StatusOpen, Priority: 2, UpdatedAt: now, CreatedAt: now.AddDate(0, 0, -30)}, // 30 days old, no urgency label
+	}
+
+	an := analysis.NewAnalyzer(issues)
+	scores := an.ComputeImpactScoresAt(now)
+
+	scoreMap := make(map[string]analysis.ImpactScore)
+	for _, s := range scores {
+		scoreMap[s.IssueID] = s
+	}
+
+	// Critical label should give highest urgency
+	if scoreMap["critical"].Breakdown.UrgencyNorm < scoreMap["urgent"].Breakdown.UrgencyNorm {
+		t.Errorf("Critical label should have higher urgency than urgent label")
+	}
+
+	// Urgent label should have higher urgency than normal
+	if scoreMap["urgent"].Breakdown.UrgencyNorm <= scoreMap["normal"].Breakdown.UrgencyNorm {
+		t.Errorf("Urgent label should have higher urgency than normal: urgent=%f, normal=%f",
+			scoreMap["urgent"].Breakdown.UrgencyNorm, scoreMap["normal"].Breakdown.UrgencyNorm)
+	}
+
+	// Old issue should have some urgency from time decay
+	if scoreMap["old"].Breakdown.UrgencyNorm <= 0 {
+		t.Errorf("Old issue should have urgency from time decay")
+	}
+
+	// Verify explanation is populated for urgent label
+	if scoreMap["urgent"].Breakdown.UrgencyExplanation == "" {
+		t.Error("UrgencyExplanation should be populated for urgent label")
+	}
+}
+
+func TestUrgencyLabelsRecognized(t *testing.T) {
+	// Verify all urgency labels are recognized
+	now := time.Now()
+
+	for _, label := range analysis.UrgencyLabels {
+		issues := []model.Issue{
+			{ID: "test", Title: "Test", Status: model.StatusOpen, Priority: 2, CreatedAt: now, Labels: []string{label}},
+		}
+
+		an := analysis.NewAnalyzer(issues)
+		scores := an.ComputeImpactScoresAt(now)
+
+		if len(scores) != 1 {
+			t.Fatalf("Expected 1 score for label %s", label)
+		}
+
+		if scores[0].Breakdown.UrgencyNorm <= 0 {
+			t.Errorf("Label '%s' should increase urgency, got %f", label, scores[0].Breakdown.UrgencyNorm)
+		}
+	}
+}
+
+func TestMedianEstimatedMinutes(t *testing.T) {
+	// Test that median estimation works correctly
+	now := time.Now()
+	est30 := 30
+	est60 := 60
+	est120 := 120
+
+	issues := []model.Issue{
+		{ID: "A", Title: "A", Status: model.StatusOpen, Priority: 2, UpdatedAt: now, EstimatedMinutes: &est30},
+		{ID: "B", Title: "B", Status: model.StatusOpen, Priority: 2, UpdatedAt: now, EstimatedMinutes: &est60},
+		{ID: "C", Title: "C", Status: model.StatusOpen, Priority: 2, UpdatedAt: now, EstimatedMinutes: &est120},
+		{ID: "D", Title: "D", Status: model.StatusOpen, Priority: 2, UpdatedAt: now}, // No estimate, should use median
+	}
+
+	an := analysis.NewAnalyzer(issues)
+	scores := an.ComputeImpactScoresAt(now)
+
+	// All should have non-zero time-to-impact
+	for _, s := range scores {
+		if s.Breakdown.TimeToImpactNorm == 0 && s.Breakdown.TimeToImpactExplanation == "" {
+			t.Errorf("Issue %s should have time-to-impact signal", s.IssueID)
 		}
 	}
 }
