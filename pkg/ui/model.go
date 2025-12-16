@@ -49,12 +49,21 @@ const (
 	focusInsights
 	focusActionable
 	focusRecipePicker
+	focusRepoPicker
 	focusHelp
 	focusQuitConfirm
 	focusTimeTravelInput
 	focusHistory
 	focusAttention
 )
+
+// LabelGraphAnalysisResult holds label-specific graph analysis results (bv-109)
+type LabelGraphAnalysisResult struct {
+	Label        string
+	Subgraph     analysis.LabelSubgraph
+	PageRank     analysis.LabelPageRankResult
+	CriticalPath analysis.LabelCriticalPathResult
+}
 
 // UpdateMsg is sent when a new version is available
 type UpdateMsg struct {
@@ -176,8 +185,10 @@ type Model struct {
 	labelHealthDetailFlow labelFlowSummary
 	labelDrilldownLabel   string
 	labelDrilldownIssues  []model.Issue
-	labelDrilldownCache   map[string][]model.Issue
-	showAttentionView     bool
+	labelDrilldownCache       map[string][]model.Issue
+	showLabelGraphAnalysis    bool
+	labelGraphAnalysisResult  *LabelGraphAnalysisResult
+	showAttentionView         bool
 	labelHealthCached     bool
 	labelHealthCache      analysis.LabelAnalysisResult
 	attentionCached       bool
@@ -218,6 +229,10 @@ type Model struct {
 	recipePicker     RecipePickerModel
 	activeRecipe     *recipe.Recipe
 	recipeLoader     *recipe.Loader
+
+	// Repo picker (workspace mode)
+	showRepoPicker bool
+	repoPicker     RepoPickerModel
 
 	// Time-travel mode
 	timeTravelMode   bool
@@ -912,10 +927,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.labelDrilldownLabel = ""
 				m.labelDrilldownIssues = nil
 				return m, nil
+			case "g":
+				// Show graph analysis sub-view (bv-109)
+				if m.labelDrilldownLabel != "" {
+					sg := analysis.ComputeLabelSubgraph(m.issues, m.labelDrilldownLabel)
+					pr := analysis.ComputeLabelPageRank(sg)
+					cp := analysis.ComputeLabelCriticalPath(sg)
+					m.labelGraphAnalysisResult = &LabelGraphAnalysisResult{
+						Label:        m.labelDrilldownLabel,
+						Subgraph:     sg,
+						PageRank:     pr,
+						CriticalPath: cp,
+					}
+					m.showLabelGraphAnalysis = true
+				}
+				return m, nil
 			case "esc", "q", "d":
 				m.showLabelDrilldown = false
 				m.labelDrilldownLabel = ""
 				m.labelDrilldownIssues = nil
+				return m, nil
+			}
+		}
+
+		// Handle label graph analysis sub-view (bv-109)
+		if m.showLabelGraphAnalysis {
+			s := msg.String()
+			switch s {
+			case "esc", "q", "g":
+				m.showLabelGraphAnalysis = false
+				m.labelGraphAnalysisResult = nil
 				return m, nil
 			}
 		}
@@ -1012,6 +1053,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showAlertsPanel = false
 				return m, nil
 			}
+			return m, nil
+		}
+
+		// Handle repo picker overlay (workspace mode) before global keys (esc/q/etc.)
+		if m.showRepoPicker {
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			m = m.handleRepoPickerKeys(msg)
+			return m, nil
+		}
+
+		// Handle recipe picker overlay before global keys (esc/q/etc.)
+		if m.showRecipePicker {
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			m = m.handleRecipePickerKeys(msg)
 			return m, nil
 		}
 
@@ -1318,6 +1377,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
+			case "w":
+				// Toggle repo picker overlay (workspace mode)
+				if !m.workspaceMode || len(m.availableRepos) == 0 {
+					m.statusMsg = "Repo filter available only in workspace mode"
+					m.statusIsError = false
+					return m, nil
+				}
+				m.showRepoPicker = !m.showRepoPicker
+				if m.showRepoPicker {
+					m.repoPicker = NewRepoPickerModel(m.availableRepos, m.theme)
+					m.repoPicker.SetActiveRepos(m.activeRepos)
+					m.repoPicker.SetSize(m.width, m.height-1)
+					m.focused = focusRepoPicker
+				} else {
+					m.focused = focusList
+				}
+				return m, nil
+
 			case "E":
 				// Export to Markdown file
 				m.exportToMarkdown()
@@ -1328,6 +1405,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.focused {
 			case focusRecipePicker:
 				m = m.handleRecipePickerKeys(msg)
+
+			case focusRepoPicker:
+				m = m.handleRepoPickerKeys(msg)
 
 			case focusInsights:
 				m = m.handleInsightsKeys(msg)
@@ -1734,6 +1814,46 @@ func (m Model) handleRecipePickerKeys(msg tea.KeyMsg) Model {
 	return m
 }
 
+// handleRepoPickerKeys handles keyboard input when repo picker is focused (workspace mode).
+func (m Model) handleRepoPickerKeys(msg tea.KeyMsg) Model {
+	switch msg.String() {
+	case "j", "down":
+		m.repoPicker.MoveDown()
+	case "k", "up":
+		m.repoPicker.MoveUp()
+	case " ", "space":
+		m.repoPicker.ToggleSelected()
+	case "a":
+		m.repoPicker.SelectAll()
+	case "esc", "q":
+		m.showRepoPicker = false
+		m.focused = focusList
+	case "enter":
+		selected := m.repoPicker.SelectedRepos()
+
+		// Normalize: nil means "all repos" (no filter). Also treat empty as "all" to avoid hiding everything.
+		if len(selected) == 0 || len(selected) == len(m.availableRepos) {
+			m.activeRepos = nil
+			m.statusMsg = "Repo filter: all repos"
+		} else {
+			m.activeRepos = selected
+			m.statusMsg = fmt.Sprintf("Repo filter: %s", formatRepoList(sortedRepoKeys(selected), 3))
+		}
+		m.statusIsError = false
+
+		// Apply filter to views
+		if m.activeRecipe != nil {
+			m.applyRecipe(m.activeRecipe)
+		} else {
+			m.applyFilter()
+		}
+
+		m.showRepoPicker = false
+		m.focused = focusList
+	}
+	return m
+}
+
 // handleInsightsKeys handles keyboard input when insights panel is focused
 func (m Model) handleInsightsKeys(msg tea.KeyMsg) Model {
 	switch msg.String() {
@@ -1933,6 +2053,8 @@ func (m Model) View() string {
 		body = m.renderQuitConfirm()
 	} else if m.showLabelHealthDetail && m.labelHealthDetail != nil {
 		body = m.renderLabelHealthDetail(*m.labelHealthDetail)
+	} else if m.showLabelGraphAnalysis && m.labelGraphAnalysisResult != nil {
+		body = m.renderLabelGraphAnalysis()
 	} else if m.showLabelDrilldown && m.labelDrilldownLabel != "" {
 		body = m.renderLabelDrilldown()
 	} else if m.showAlertsPanel {
@@ -1941,6 +2063,8 @@ func (m Model) View() string {
 		body = m.renderTimeTravelPrompt()
 	} else if m.showRecipePicker {
 		body = m.recipePicker.View()
+	} else if m.showRepoPicker {
+		body = m.repoPicker.View()
 	} else if m.showHelp {
 		body = m.renderHelpOverlay()
 	} else if m.focused == focusInsights {
@@ -2032,7 +2156,12 @@ func (m Model) renderListWithHeader() string {
 		Bold(true).
 		Width(m.width - 2)
 
-	header := headerStyle.Render("  TYPE PRI STATUS      ID                                   TITLE")
+	headerText := "  TYPE PRI STATUS      ID                                   TITLE"
+	if m.workspaceMode {
+		// Account for repo badges like [API] shown in workspace mode.
+		headerText = "  REPO TYPE PRI STATUS      ID                               TITLE"
+	}
+	header := headerStyle.Render(headerText)
 
 	// Page info
 	totalItems := len(m.list.Items())
@@ -2227,6 +2356,7 @@ func (m *Model) renderHelpOverlay() string {
 		{"H", "Toggle History view"},
 		{"i", "Toggle Insights dashboard"},
 		{"R", "Open Recipe picker"},
+		{"w", "Repo filter (workspace mode)"},
 		{"?", "Toggle this help"},
 	}
 	for _, s := range views {
@@ -2677,7 +2807,163 @@ func (m Model) renderLabelDrilldown() string {
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString(t.Renderer.NewStyle().Foreground(t.Secondary).Italic(true).Render("Press Esc to close"))
+	sb.WriteString(t.Renderer.NewStyle().Foreground(t.Secondary).Italic(true).Render("Press Esc to close • g for graph analysis"))
+
+	content := boxStyle.Render(sb.String())
+
+	return lipgloss.Place(
+		m.width,
+		m.height-1,
+		lipgloss.Center,
+		lipgloss.Center,
+		content,
+	)
+}
+
+// renderLabelGraphAnalysis shows label-specific graph metrics (bv-109)
+func (m Model) renderLabelGraphAnalysis() string {
+	t := m.theme
+	r := m.labelGraphAnalysisResult
+
+	boxStyle := t.Renderer.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(t.Primary).
+		Padding(1, 2).
+		Align(lipgloss.Left)
+
+	titleStyle := t.Renderer.NewStyle().
+		Foreground(t.Primary).
+		Bold(true)
+
+	labelStyle := t.Renderer.NewStyle().
+		Foreground(t.Base.GetForeground()).
+		Bold(true)
+
+	valStyle := t.Renderer.NewStyle().
+		Foreground(t.Base.GetForeground())
+
+	subtextStyle := t.Renderer.NewStyle().
+		Foreground(t.Subtext).
+		Italic(true)
+
+	var sb strings.Builder
+	sb.WriteString(titleStyle.Render(fmt.Sprintf("Graph Analysis: %s", r.Label)))
+	sb.WriteString("\n")
+	sb.WriteString(subtextStyle.Render("PageRank & Critical Path computed on label subgraph"))
+	sb.WriteString("\n\n")
+
+	// Subgraph stats
+	sb.WriteString(labelStyle.Render("Subgraph: "))
+	sb.WriteString(valStyle.Render(fmt.Sprintf("%d issues (%d core, %d dependencies), %d edges",
+		r.Subgraph.IssueCount, r.Subgraph.CoreCount,
+		r.Subgraph.IssueCount-r.Subgraph.CoreCount, r.Subgraph.EdgeCount)))
+	sb.WriteString("\n\n")
+
+	// Critical Path section
+	sb.WriteString(labelStyle.Render("🛤️  Critical Path"))
+	if r.CriticalPath.HasCycle {
+		sb.WriteString(valStyle.Render(" ⚠️  (cycle detected - path unreliable)"))
+	}
+	sb.WriteString("\n")
+	if r.CriticalPath.PathLength == 0 {
+		sb.WriteString(subtextStyle.Render("  No dependency chains found"))
+	} else {
+		sb.WriteString(valStyle.Render(fmt.Sprintf("  Length: %d issues (max height: %d)",
+			r.CriticalPath.PathLength, r.CriticalPath.MaxHeight)))
+		sb.WriteString("\n")
+
+		// Show the path with titles
+		maxRows := m.height - 20
+		if maxRows < 3 {
+			maxRows = 3
+		}
+		showCount := len(r.CriticalPath.Path)
+		if showCount > maxRows {
+			showCount = maxRows
+		}
+
+		for i := 0; i < showCount; i++ {
+			issueID := r.CriticalPath.Path[i]
+			title := r.CriticalPath.PathTitles[i]
+			if title == "" {
+				title = "(no title)"
+			}
+			arrow := "  →"
+			if i == 0 {
+				arrow = "  ●" // root
+			}
+			if i == len(r.CriticalPath.Path)-1 {
+				arrow = "  ◆" // leaf
+			}
+
+			// Truncate title if needed
+			maxTitleLen := m.width/2 - 20
+			if maxTitleLen < 20 {
+				maxTitleLen = 20
+			}
+			if len(title) > maxTitleLen {
+				title = title[:maxTitleLen-1] + "…"
+			}
+
+			height := r.CriticalPath.AllHeights[issueID]
+			line := fmt.Sprintf("%s %-12s [h=%d] %s", arrow, issueID, height, title)
+			sb.WriteString(valStyle.Render(line))
+			sb.WriteString("\n")
+		}
+		if len(r.CriticalPath.Path) > showCount {
+			sb.WriteString(subtextStyle.Render(fmt.Sprintf("  … +%d more in path", len(r.CriticalPath.Path)-showCount)))
+			sb.WriteString("\n")
+		}
+	}
+	sb.WriteString("\n")
+
+	// PageRank section
+	sb.WriteString(labelStyle.Render("📊 PageRank (Top Issues)"))
+	sb.WriteString("\n")
+	if len(r.PageRank.TopIssues) == 0 {
+		sb.WriteString(subtextStyle.Render("  No issues to rank"))
+	} else {
+		maxPRRows := 8
+		showPRCount := len(r.PageRank.TopIssues)
+		if showPRCount > maxPRRows {
+			showPRCount = maxPRRows
+		}
+
+		for i := 0; i < showPRCount; i++ {
+			item := r.PageRank.TopIssues[i]
+			title := ""
+			statusIcon := "○"
+			if iss, ok := r.Subgraph.IssueMap[item.ID]; ok {
+				title = iss.Title
+				statusIcon = getStatusIcon(iss.Status)
+			}
+			if title == "" {
+				title = "(no title)"
+			}
+
+			// Truncate title if needed
+			maxTitleLen := m.width/2 - 30
+			if maxTitleLen < 15 {
+				maxTitleLen = 15
+			}
+			if len(title) > maxTitleLen {
+				title = title[:maxTitleLen-1] + "…"
+			}
+
+			normalized := r.PageRank.Normalized[item.ID]
+			line := fmt.Sprintf("  %s %-12s PR=%.4f (%.0f%%) %s",
+				statusIcon, item.ID, item.Score, normalized*100, title)
+			sb.WriteString(valStyle.Render(line))
+			sb.WriteString("\n")
+		}
+		if len(r.PageRank.TopIssues) > showPRCount {
+			sb.WriteString(subtextStyle.Render(fmt.Sprintf("  … +%d more ranked", len(r.PageRank.TopIssues)-showPRCount)))
+			sb.WriteString("\n")
+		}
+	}
+
+	sb.WriteString("\n")
+	sb.WriteString(t.Renderer.NewStyle().Foreground(t.Secondary).Italic(true).Render("Press Esc/q/g to close"))
 
 	content := boxStyle.Render(sb.String())
 
@@ -2728,8 +3014,11 @@ func (m *Model) renderFooter() string {
 	if m.focused == focusLabelDashboard {
 		filterTxt = "LABELS: j/k nav • h detail • d drilldown • enter filter"
 		filterIcon = "🏷️"
+	} else if m.showLabelGraphAnalysis && m.labelGraphAnalysisResult != nil {
+		filterTxt = fmt.Sprintf("GRAPH %s: esc/q/g close", m.labelGraphAnalysisResult.Label)
+		filterIcon = "📊"
 	} else if m.showLabelDrilldown && m.labelDrilldownLabel != "" {
-		filterTxt = fmt.Sprintf("LABEL %s: enter filter • esc/q/d close", m.labelDrilldownLabel)
+		filterTxt = fmt.Sprintf("LABEL %s: enter filter • g graph • esc/q/d close", m.labelDrilldownLabel)
 		filterIcon = "🏷️"
 	} else {
 		switch m.currentFilter {
@@ -2886,6 +3175,21 @@ func (m *Model) renderFooter() string {
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
+	// REPO FILTER BADGE - Active repo selection (workspace mode)
+	// ─────────────────────────────────────────────────────────────────────────
+	repoFilterSection := ""
+	if m.workspaceMode && m.activeRepos != nil && len(m.activeRepos) > 0 {
+		active := sortedRepoKeys(m.activeRepos)
+		label := formatRepoList(active, 3)
+		repoStyle := lipgloss.NewStyle().
+			Background(ColorBgHighlight).
+			Foreground(ColorInfo).
+			Bold(true).
+			Padding(0, 1)
+		repoFilterSection = repoStyle.Render(fmt.Sprintf("🗂 %s", label))
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
 	// KEYBOARD HINTS - Context-aware navigation help
 	// ─────────────────────────────────────────────────────────────────────────
 	keyStyle := lipgloss.NewStyle().
@@ -2900,6 +3204,8 @@ func (m *Model) renderFooter() string {
 		keyHints = append(keyHints, "Press any key to close")
 	} else if m.showRecipePicker {
 		keyHints = append(keyHints, keyStyle.Render("j/k")+" nav", keyStyle.Render("⏎")+" apply", keyStyle.Render("esc")+" cancel")
+	} else if m.showRepoPicker {
+		keyHints = append(keyHints, keyStyle.Render("j/k")+" nav", keyStyle.Render("space")+" toggle", keyStyle.Render("⏎")+" apply", keyStyle.Render("esc")+" cancel")
 	} else if m.focused == focusInsights {
 		keyHints = append(keyHints, keyStyle.Render("h/l")+" panels", keyStyle.Render("e")+" explain", keyStyle.Render("⏎")+" jump", keyStyle.Render("?")+" help")
 		keyHints = append(keyHints, keyStyle.Render("A")+" attention", keyStyle.Render("F")+" flow")
@@ -2924,6 +3230,9 @@ func (m *Model) renderFooter() string {
 			keyHints = append(keyHints, keyStyle.Render("esc")+" back", keyStyle.Render("C")+" copy", keyStyle.Render("O")+" edit", keyStyle.Render("?")+" help")
 		} else {
 			keyHints = append(keyHints, keyStyle.Render("⏎")+" details", keyStyle.Render("t")+" diff", keyStyle.Render("S")+" triage", keyStyle.Render("ECO")+" actions", keyStyle.Render("?")+" help")
+			if m.workspaceMode {
+				keyHints = append(keyHints, keyStyle.Render("w")+" repos")
+			}
 		}
 	}
 
@@ -2943,15 +3252,18 @@ func (m *Model) renderFooter() string {
 	// ─────────────────────────────────────────────────────────────────────────
 	// ASSEMBLE FOOTER with proper spacing
 	// ─────────────────────────────────────────────────────────────────────────
-	leftWidth := lipgloss.Width(filterBadge) + lipgloss.Width(statsSection)
+	leftWidth := lipgloss.Width(filterBadge) + lipgloss.Width(labelHint) + lipgloss.Width(statsSection)
 	if alertsSection != "" {
 		leftWidth += lipgloss.Width(alertsSection) + 1
 	}
-	if updateSection != "" {
-		leftWidth += lipgloss.Width(updateSection) + 1
-	}
 	if workspaceSection != "" {
 		leftWidth += lipgloss.Width(workspaceSection) + 1
+	}
+	if repoFilterSection != "" {
+		leftWidth += lipgloss.Width(repoFilterSection) + 1
+	}
+	if updateSection != "" {
+		leftWidth += lipgloss.Width(updateSection) + 1
 	}
 	rightWidth := lipgloss.Width(countBadge) + lipgloss.Width(keysSection)
 
@@ -2969,6 +3281,9 @@ func (m *Model) renderFooter() string {
 	}
 	if workspaceSection != "" {
 		parts = append(parts, workspaceSection)
+	}
+	if repoFilterSection != "" {
+		parts = append(parts, repoFilterSection)
 	}
 	if updateSection != "" {
 		parts = append(parts, updateSection)
@@ -3000,6 +3315,14 @@ func (m *Model) applyFilter() {
 	var filteredIssues []model.Issue
 
 	for _, issue := range m.issues {
+		// Workspace repo filter (nil = all repos)
+		if m.workspaceMode && m.activeRepos != nil {
+			repoKey := strings.ToLower(ExtractRepoPrefix(issue.ID))
+			if repoKey != "" && !m.activeRepos[repoKey] {
+				continue
+			}
+		}
+
 		include := false
 		switch m.currentFilter {
 		case "all":
@@ -3081,6 +3404,14 @@ func (m *Model) applyRecipe(r *recipe.Recipe) {
 
 	for _, issue := range m.issues {
 		include := true
+
+		// Workspace repo filter (nil = all repos)
+		if m.workspaceMode && m.activeRepos != nil {
+			repoKey := strings.ToLower(ExtractRepoPrefix(issue.ID))
+			if repoKey != "" && !m.activeRepos[repoKey] {
+				include = false
+			}
+		}
 
 		// Apply status filter
 		if len(r.Filters.Status) > 0 {
@@ -3501,7 +3832,7 @@ func (m Model) FilteredIssues() []model.Issue {
 // EnableWorkspaceMode configures the model for workspace (multi-repo) view
 func (m *Model) EnableWorkspaceMode(info WorkspaceInfo) {
 	m.workspaceMode = info.Enabled
-	m.availableRepos = info.RepoPrefixes
+	m.availableRepos = normalizeRepoPrefixes(info.RepoPrefixes)
 	m.activeRepos = nil // nil means all repos are active
 
 	if info.RepoCount > 0 {
