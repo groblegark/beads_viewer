@@ -1,6 +1,7 @@
 package export
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"os"
@@ -526,4 +527,371 @@ func isShellSafeChar(r rune) bool {
 		(r >= 'A' && r <= 'Z') ||
 		(r >= '0' && r <= '9') ||
 		r == '-' || r == '_' || r == '.' || r == ':'
+}
+
+// ============================================================================
+// Priority Brief Export (bv-96)
+// ============================================================================
+
+// PriorityBriefConfig configures the priority brief generation
+type PriorityBriefConfig struct {
+	MaxRecommendations int  // Max recommendations to include (default: 5)
+	MaxQuickWins       int  // Max quick wins to include (default: 3)
+	MaxBlockers        int  // Max blockers to include (default: 3)
+	IncludeWhatIf      bool // Include what-if deltas
+	IncludeLegend      bool // Include metric legend
+	DataHash           string // Optional data hash for verification
+}
+
+// DefaultPriorityBriefConfig returns sensible defaults for the priority brief
+func DefaultPriorityBriefConfig() PriorityBriefConfig {
+	return PriorityBriefConfig{
+		MaxRecommendations: 5,
+		MaxQuickWins:       3,
+		MaxBlockers:        3,
+		IncludeWhatIf:      true,
+		IncludeLegend:      true,
+	}
+}
+
+// GeneratePriorityBrief creates a compact Markdown priority brief from triage data (bv-96)
+// This is designed for human readability and can be rendered to PNG
+func GeneratePriorityBrief(triage interface{}, config PriorityBriefConfig) string {
+	var sb strings.Builder
+
+	// Cast to TriageResult-like interface (to avoid import cycle)
+	type triageData struct {
+		Meta struct {
+			Version       string    `json:"version"`
+			GeneratedAt   time.Time `json:"generated_at"`
+			Phase2Ready   bool      `json:"phase2_ready"`
+			IssueCount    int       `json:"issue_count"`
+		}
+		QuickRef struct {
+			OpenCount       int `json:"open_count"`
+			ActionableCount int `json:"actionable_count"`
+			BlockedCount    int `json:"blocked_count"`
+			InProgressCount int `json:"in_progress_count"`
+			TopPicks []struct {
+				ID       string   `json:"id"`
+				Title    string   `json:"title"`
+				Score    float64  `json:"score"`
+				Reasons  []string `json:"reasons"`
+				Unblocks int      `json:"unblocks"`
+			}
+		}
+		Recommendations []struct {
+			ID        string  `json:"id"`
+			Title     string  `json:"title"`
+			Type      string  `json:"type"`
+			Status    string  `json:"status"`
+			Priority  int     `json:"priority"`
+			Score     float64 `json:"score"`
+			Action    string  `json:"action"`
+			Reasons   []string `json:"reasons"`
+			Breakdown struct {
+				PageRankNorm      float64 `json:"pagerank_norm"`
+				BetweennessNorm   float64 `json:"betweenness_norm"`
+				TimeToImpactNorm  float64 `json:"time_to_impact_norm"`
+			}
+		}
+		QuickWins []struct {
+			ID     string  `json:"id"`
+			Title  string  `json:"title"`
+			Score  float64 `json:"score"`
+			Reason string  `json:"reason"`
+		}
+		BlockersToClear []struct {
+			ID            string `json:"id"`
+			Title         string `json:"title"`
+			UnblocksCount int    `json:"unblocks_count"`
+			Actionable    bool   `json:"actionable"`
+		}
+	}
+
+	// Use reflection or JSON marshal/unmarshal to access fields
+	// For simplicity, we'll use direct field access assuming the types match
+
+	// Header
+	sb.WriteString("# 📊 Priority Brief\n\n")
+	sb.WriteString(fmt.Sprintf("*Generated: %s*\n\n", time.Now().Format("2006-01-02 15:04")))
+
+	// Add data hash if provided
+	if config.DataHash != "" {
+		sb.WriteString(fmt.Sprintf("**Data Hash:** `%s`\n\n", config.DataHash))
+	}
+
+	sb.WriteString("---\n\n")
+
+	// This is a simplified implementation - in production, you'd use proper type casting
+	// For now, return a placeholder that demonstrates the structure
+	sb.WriteString("## 🎯 Top Recommendations\n\n")
+	sb.WriteString("| # | Issue | Type | Priority | Score | Top Reason |\n")
+	sb.WriteString("|---|-------|------|----------|-------|------------|\n")
+	sb.WriteString("| 1 | *Run `bv --robot-triage` for data* | - | - | - | - |\n\n")
+
+	sb.WriteString("## ⚡ Quick Wins\n\n")
+	sb.WriteString("| Issue | Reason | Impact |\n")
+	sb.WriteString("|-------|--------|--------|\n")
+	sb.WriteString("| *Run `bv --robot-triage` for data* | - | - |\n\n")
+
+	sb.WriteString("## 🚧 Blockers to Clear\n\n")
+	sb.WriteString("| Issue | Unblocks | Actionable |\n")
+	sb.WriteString("|-------|----------|------------|\n")
+	sb.WriteString("| *Run `bv --robot-triage` for data* | - | - |\n\n")
+
+	// Legend
+	if config.IncludeLegend {
+		sb.WriteString("---\n\n")
+		sb.WriteString("## 📖 Legend\n\n")
+		sb.WriteString("| Metric | Description |\n")
+		sb.WriteString("|--------|-------------|\n")
+		sb.WriteString("| **PR** | PageRank - importance based on incoming dependencies |\n")
+		sb.WriteString("| **BW** | Betweenness - how often this issue is on critical paths |\n")
+		sb.WriteString("| **TI** | Time-to-Impact - urgency based on depth and estimates |\n")
+		sb.WriteString("| **Score** | Composite priority score (0.0-1.0, higher = more important) |\n")
+		sb.WriteString("| **Unblocks** | Number of issues that can proceed once this is done |\n\n")
+	}
+
+	return sb.String()
+}
+
+// GeneratePriorityBriefFromTriage creates a priority brief from a TriageResult (bv-96)
+// This is the production version that takes proper triage data
+func GeneratePriorityBriefFromTriageJSON(triageJSON []byte, config PriorityBriefConfig) (string, error) {
+	// Parse the JSON
+	var triage struct {
+		Meta struct {
+			Version       string    `json:"version"`
+			GeneratedAt   time.Time `json:"generated_at"`
+			Phase2Ready   bool      `json:"phase2_ready"`
+			IssueCount    int       `json:"issue_count"`
+		} `json:"meta"`
+		QuickRef struct {
+			OpenCount       int `json:"open_count"`
+			ActionableCount int `json:"actionable_count"`
+			BlockedCount    int `json:"blocked_count"`
+			InProgressCount int `json:"in_progress_count"`
+			TopPicks []struct {
+				ID       string   `json:"id"`
+				Title    string   `json:"title"`
+				Score    float64  `json:"score"`
+				Reasons  []string `json:"reasons"`
+				Unblocks int      `json:"unblocks"`
+			} `json:"top_picks"`
+		} `json:"quick_ref"`
+		Recommendations []struct {
+			ID        string   `json:"id"`
+			Title     string   `json:"title"`
+			Type      string   `json:"type"`
+			Status    string   `json:"status"`
+			Priority  int      `json:"priority"`
+			Score     float64  `json:"score"`
+			Action    string   `json:"action"`
+			Reasons   []string `json:"reasons"`
+			Breakdown struct {
+				PageRankNorm      float64 `json:"pagerank_norm"`
+				BetweennessNorm   float64 `json:"betweenness_norm"`
+				TimeToImpactNorm  float64 `json:"time_to_impact_norm"`
+			} `json:"breakdown"`
+		} `json:"recommendations"`
+		QuickWins []struct {
+			ID     string  `json:"id"`
+			Title  string  `json:"title"`
+			Score  float64 `json:"score"`
+			Reason string  `json:"reason"`
+		} `json:"quick_wins"`
+		BlockersToClear []struct {
+			ID            string `json:"id"`
+			Title         string `json:"title"`
+			UnblocksCount int    `json:"unblocks_count"`
+			Actionable    bool   `json:"actionable"`
+		} `json:"blockers_to_clear"`
+	}
+
+	if err := json.Unmarshal(triageJSON, &triage); err != nil {
+		return "", fmt.Errorf("failed to parse triage JSON: %w", err)
+	}
+
+	var sb strings.Builder
+
+	// Header
+	sb.WriteString("# 📊 Priority Brief\n\n")
+	sb.WriteString(fmt.Sprintf("*Generated: %s*  \n", triage.Meta.GeneratedAt.Format("2006-01-02 15:04")))
+	sb.WriteString(fmt.Sprintf("*Version: %s | Issues: %d*\n\n", triage.Meta.Version, triage.Meta.IssueCount))
+
+	// Data hash
+	if config.DataHash != "" {
+		sb.WriteString(fmt.Sprintf("**Hash:** `%s`\n\n", config.DataHash))
+	}
+
+	// Summary stats
+	sb.WriteString("## 📈 Summary\n\n")
+	sb.WriteString(fmt.Sprintf("| Open | In Progress | Blocked | Actionable |\n"))
+	sb.WriteString(fmt.Sprintf("|:----:|:-----------:|:-------:|:----------:|\n"))
+	sb.WriteString(fmt.Sprintf("| %d | %d | %d | %d |\n\n",
+		triage.QuickRef.OpenCount,
+		triage.QuickRef.InProgressCount,
+		triage.QuickRef.BlockedCount,
+		triage.QuickRef.ActionableCount))
+
+	sb.WriteString("---\n\n")
+
+	// Top Recommendations
+	sb.WriteString("## 🎯 Top Recommendations\n\n")
+	if len(triage.Recommendations) == 0 {
+		sb.WriteString("*No recommendations available.*\n\n")
+	} else {
+		sb.WriteString("| # | Issue | Type | P | Score | PR | BW | TI | Top Reason |\n")
+		sb.WriteString("|:-:|-------|:----:|:-:|:-----:|:--:|:--:|:--:|------------|\n")
+
+		limit := config.MaxRecommendations
+		if limit > len(triage.Recommendations) {
+			limit = len(triage.Recommendations)
+		}
+
+		for i := 0; i < limit; i++ {
+			rec := triage.Recommendations[i]
+			typeIcon := getTypeIcon(rec.Type)
+			reason := "-"
+			if len(rec.Reasons) > 0 {
+				reason = truncateString(rec.Reasons[0], 30)
+			}
+			sb.WriteString(fmt.Sprintf("| %d | **%s** %s | %s | P%d | %.2f | %s | %s | %s | %s |\n",
+				i+1,
+				rec.ID,
+				truncateString(rec.Title, 25),
+				typeIcon,
+				rec.Priority,
+				rec.Score,
+				barChart(rec.Breakdown.PageRankNorm),
+				barChart(rec.Breakdown.BetweennessNorm),
+				barChart(rec.Breakdown.TimeToImpactNorm),
+				reason,
+			))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Quick Wins
+	sb.WriteString("## ⚡ Quick Wins\n\n")
+	if len(triage.QuickWins) == 0 {
+		sb.WriteString("*No quick wins identified.*\n\n")
+	} else {
+		sb.WriteString("| Issue | Reason |\n")
+		sb.WriteString("|-------|--------|\n")
+
+		limit := config.MaxQuickWins
+		if limit > len(triage.QuickWins) {
+			limit = len(triage.QuickWins)
+		}
+
+		for i := 0; i < limit; i++ {
+			qw := triage.QuickWins[i]
+			sb.WriteString(fmt.Sprintf("| **%s** %s | %s |\n",
+				qw.ID,
+				truncateString(qw.Title, 30),
+				truncateString(qw.Reason, 40),
+			))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Blockers
+	sb.WriteString("## 🚧 Blockers to Clear\n\n")
+	if len(triage.BlockersToClear) == 0 {
+		sb.WriteString("*No critical blockers.*\n\n")
+	} else {
+		sb.WriteString("| Issue | Unblocks | Ready? |\n")
+		sb.WriteString("|-------|:--------:|:------:|\n")
+
+		limit := config.MaxBlockers
+		if limit > len(triage.BlockersToClear) {
+			limit = len(triage.BlockersToClear)
+		}
+
+		for i := 0; i < limit; i++ {
+			b := triage.BlockersToClear[i]
+			ready := "❌"
+			if b.Actionable {
+				ready = "✅"
+			}
+			sb.WriteString(fmt.Sprintf("| **%s** %s | %d | %s |\n",
+				b.ID,
+				truncateString(b.Title, 30),
+				b.UnblocksCount,
+				ready,
+			))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Legend
+	if config.IncludeLegend {
+		sb.WriteString("---\n\n")
+		sb.WriteString("## 📖 Legend\n\n")
+		sb.WriteString("| Symbol | Meaning |\n")
+		sb.WriteString("|:------:|:--------|\n")
+		sb.WriteString("| **PR** | PageRank - dependency importance |\n")
+		sb.WriteString("| **BW** | Betweenness - critical path frequency |\n")
+		sb.WriteString("| **TI** | Time-to-Impact - urgency factor |\n")
+		sb.WriteString("| █░░░ | Low (0-25%) |\n")
+		sb.WriteString("| ██░░ | Medium (25-50%) |\n")
+		sb.WriteString("| ███░ | High (50-75%) |\n")
+		sb.WriteString("| ████ | Very High (75-100%) |\n")
+	}
+
+	return sb.String(), nil
+}
+
+// barChart creates a mini ASCII bar chart for a 0-1 value
+func barChart(value float64) string {
+	if value < 0 {
+		value = 0
+	}
+	if value > 1 {
+		value = 1
+	}
+	filled := int(value * 4)
+	switch filled {
+	case 0:
+		return "░░░░"
+	case 1:
+		return "█░░░"
+	case 2:
+		return "██░░"
+	case 3:
+		return "███░"
+	default:
+		return "████"
+	}
+}
+
+// truncateString truncates a string to maxLen with ellipsis
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen < 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-1] + "…"
+}
+
+// getTypeIcon returns a compact icon for issue type (for tables)
+func getTypeIcon(issueType string) string {
+	switch issueType {
+	case "bug":
+		return "🐛"
+	case "feature":
+		return "✨"
+	case "task":
+		return "📋"
+	case "epic":
+		return "🚀"
+	case "chore":
+		return "🧹"
+	default:
+		return "•"
+	}
 }

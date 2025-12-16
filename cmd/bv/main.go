@@ -114,6 +114,8 @@ func main() {
 	emitScript := flag.Bool("emit-script", false, "Emit shell script for top-N recommendations (agent workflows)")
 	scriptLimit := flag.Int("script-limit", 5, "Limit number of items in emitted script (use with --emit-script)")
 	scriptFormat := flag.String("script-format", "bash", "Script format: bash, fish, or zsh (use with --emit-script)")
+	// Priority brief export (bv-96)
+	priorityBrief := flag.String("priority-brief", "", "Export priority brief to Markdown file (e.g., brief.md)")
 	// Static pages export flags (bv-73f)
 	exportPages := flag.String("export-pages", "", "Export static site to directory (e.g., ./bv-pages)")
 	pagesTitle := flag.String("pages-title", "", "Custom title for static site")
@@ -125,17 +127,17 @@ func main() {
 	// Ensure static export flags are retained even when build tags strip features in some environments.
 	_ = exportPages
 	_ = pagesTitle
-		_ = pagesIncludeClosed
-		_ = previewPages
-		_ = pagesWizard
-		_ = robotForecast
-		_ = forecastLabel
-		_ = forecastSprint
-		_ = forecastAgents
-		_ = robotCapacity
-		_ = capacityAgents
-		_ = capacityLabel
-		_ = labelScope
+	_ = pagesIncludeClosed
+	_ = previewPages
+	_ = pagesWizard
+	_ = robotForecast
+	_ = forecastLabel
+	_ = forecastSprint
+	_ = forecastAgents
+	_ = robotCapacity
+	_ = capacityAgents
+	_ = capacityLabel
+	_ = labelScope
 
 	envRobot := os.Getenv("BV_ROBOT") == "1"
 	stdoutIsTTY := term.IsTerminal(int(os.Stdout.Fd()))
@@ -684,6 +686,8 @@ func main() {
 		issues = filterByRepo(issues, *repoFilter)
 	}
 
+	issuesForSearch := issues
+
 	// Stable data hash for robot outputs (after repo filter but before recipes/TUI)
 	dataHash := analysis.ComputeDataHash(issues)
 
@@ -729,7 +733,11 @@ func main() {
 			os.Exit(1)
 		}
 
-		projectDir, _ := os.Getwd()
+		projectDir, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 		indexPath := search.DefaultIndexPath(projectDir, cfg)
 		idx, loaded, err := search.LoadOrNewVectorIndex(indexPath, embedder.Dim())
 		if err != nil {
@@ -737,7 +745,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		docs := search.DocumentsFromIssues(issues)
+		docs := search.DocumentsFromIssues(issuesForSearch)
 		if !*robotSearch && !loaded {
 			fmt.Fprintf(os.Stderr, "Building semantic index (%d issues)...\n", len(docs))
 		}
@@ -776,8 +784,8 @@ func main() {
 			os.Exit(1)
 		}
 
-		titleByID := make(map[string]string, len(issues))
-		for _, iss := range issues {
+		titleByID := make(map[string]string, len(issuesForSearch))
+		for _, iss := range issuesForSearch {
 			titleByID[iss.ID] = iss.Title
 		}
 
@@ -788,18 +796,18 @@ func main() {
 				Title   string  `json:"title,omitempty"`
 			}
 			out := struct {
-				GeneratedAt string              `json:"generated_at"`
-				DataHash    string              `json:"data_hash"`
-				Query       string              `json:"query"`
-				Provider    search.Provider     `json:"provider"`
-				Model       string              `json:"model,omitempty"`
-				Dim         int                 `json:"dim"`
-				IndexPath   string              `json:"index_path"`
+				GeneratedAt string                `json:"generated_at"`
+				DataHash    string                `json:"data_hash"`
+				Query       string                `json:"query"`
+				Provider    search.Provider       `json:"provider"`
+				Model       string                `json:"model,omitempty"`
+				Dim         int                   `json:"dim"`
+				IndexPath   string                `json:"index_path"`
 				Index       search.IndexSyncStats `json:"index"`
-				Loaded      bool                `json:"loaded"`
-				Limit       int                 `json:"limit"`
-				Results     []resultRow         `json:"results"`
-				UsageHints  []string            `json:"usage_hints"`
+				Loaded      bool                  `json:"loaded"`
+				Limit       int                   `json:"limit"`
+				Results     []resultRow           `json:"results"`
+				UsageHints  []string              `json:"usage_hints"`
 			}{
 				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 				DataHash:    dataHash,
@@ -1456,27 +1464,27 @@ func main() {
 			cfg := analysis.FullAnalysisConfig()
 			analyzer.SetConfig(&cfg)
 		}
-			stats := analyzer.Analyze()
-			// Generate top 50 lists for summary, but full stats are included in the struct
-			insights := stats.GenerateInsights(50)
+		stats := analyzer.Analyze()
+		// Generate top 50 lists for summary, but full stats are included in the struct
+		insights := stats.GenerateInsights(50)
 
-			// Add project-level velocity snapshot (reuse triage computation for consistency)
-			if triage := analysis.ComputeTriage(issues); triage.ProjectHealth.Velocity != nil {
-				v := triage.ProjectHealth.Velocity
-				snap := &analysis.VelocitySnapshot{
-					Closed7:   v.ClosedLast7Days,
-					Closed30:  v.ClosedLast30Days,
-					AvgDays:   v.AvgDaysToClose,
-					Estimated: v.Estimated,
-				}
-				if len(v.Weekly) > 0 {
-					snap.Weekly = make([]int, len(v.Weekly))
-					for i := range v.Weekly {
-						snap.Weekly[i] = v.Weekly[i].Closed
-					}
-				}
-				insights.Velocity = snap
+		// Add project-level velocity snapshot (reuse triage computation for consistency)
+		if triage := analysis.ComputeTriage(issues); triage.ProjectHealth.Velocity != nil {
+			v := triage.ProjectHealth.Velocity
+			snap := &analysis.VelocitySnapshot{
+				Closed7:   v.ClosedLast7Days,
+				Closed30:  v.ClosedLast30Days,
+				AvgDays:   v.AvgDaysToClose,
+				Estimated: v.Estimated,
 			}
+			if len(v.Weekly) > 0 {
+				snap.Weekly = make([]int, len(v.Weekly))
+				for i := range v.Weekly {
+					snap.Weekly[i] = v.Weekly[i].Closed
+				}
+			}
+			insights.Velocity = snap
+		}
 
 		// Optional cap for metric maps to avoid overload
 		limitMaps := func(m map[string]float64, limit int) map[string]float64 {
@@ -1871,6 +1879,37 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error encoding robot-triage: %v\n", err)
 			os.Exit(1)
 		}
+		os.Exit(0)
+	}
+
+	// Handle --priority-brief flag (bv-96)
+	if *priorityBrief != "" {
+		fmt.Printf("Generating priority brief to %s...\n", *priorityBrief)
+		triage := analysis.ComputeTriage(issues)
+
+		// Marshal triage to JSON for the export function
+		triageJSON, err := json.Marshal(triage)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error marshaling triage data: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Generate the brief
+		config := export.DefaultPriorityBriefConfig()
+		config.DataHash = dataHash
+		brief, err := export.GeneratePriorityBriefFromTriageJSON(triageJSON, config)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error generating priority brief: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Write to file
+		if err := os.WriteFile(*priorityBrief, []byte(brief), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing priority brief: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Done! Priority brief saved to %s\n", *priorityBrief)
 		os.Exit(0)
 	}
 
@@ -2360,8 +2399,8 @@ func main() {
 		// Parallelizable = work that can run concurrently
 
 		// Build dependency adjacency for open issues
-		blockedBy := make(map[string][]string)  // issue -> its blockers
-		blocks := make(map[string][]string)     // issue -> issues it blocks
+		blockedBy := make(map[string][]string) // issue -> its blockers
+		blocks := make(map[string][]string)    // issue -> issues it blocks
 		for _, iss := range openIssues {
 			for _, dep := range iss.Dependencies {
 				if dep == nil {
@@ -3817,32 +3856,32 @@ func runPagesWizard(issues []model.Issue, beadsPath string) error {
 
 // BurndownOutput represents the JSON output for --robot-burndown (bv-159)
 type BurndownOutput struct {
-	GeneratedAt       time.Time           `json:"generated_at"`
-	SprintID          string              `json:"sprint_id"`
-	SprintName        string              `json:"sprint_name"`
-	StartDate         time.Time           `json:"start_date"`
-	EndDate           time.Time           `json:"end_date"`
-	TotalDays         int                 `json:"total_days"`
-	ElapsedDays       int                 `json:"elapsed_days"`
-	RemainingDays     int                 `json:"remaining_days"`
-	TotalIssues       int                 `json:"total_issues"`
-	CompletedIssues   int                 `json:"completed_issues"`
-	RemainingIssues   int                 `json:"remaining_issues"`
-	IdealBurnRate     float64             `json:"ideal_burn_rate"`
-	ActualBurnRate    float64             `json:"actual_burn_rate"`
-	ProjectedComplete *time.Time          `json:"projected_complete,omitempty"`
-	OnTrack           bool                `json:"on_track"`
+	GeneratedAt       time.Time             `json:"generated_at"`
+	SprintID          string                `json:"sprint_id"`
+	SprintName        string                `json:"sprint_name"`
+	StartDate         time.Time             `json:"start_date"`
+	EndDate           time.Time             `json:"end_date"`
+	TotalDays         int                   `json:"total_days"`
+	ElapsedDays       int                   `json:"elapsed_days"`
+	RemainingDays     int                   `json:"remaining_days"`
+	TotalIssues       int                   `json:"total_issues"`
+	CompletedIssues   int                   `json:"completed_issues"`
+	RemainingIssues   int                   `json:"remaining_issues"`
+	IdealBurnRate     float64               `json:"ideal_burn_rate"`
+	ActualBurnRate    float64               `json:"actual_burn_rate"`
+	ProjectedComplete *time.Time            `json:"projected_complete,omitempty"`
+	OnTrack           bool                  `json:"on_track"`
 	DailyPoints       []model.BurndownPoint `json:"daily_points"`
 	IdealLine         []model.BurndownPoint `json:"ideal_line"`
-	ScopeChanges      []ScopeChangeEvent  `json:"scope_changes,omitempty"`
+	ScopeChanges      []ScopeChangeEvent    `json:"scope_changes,omitempty"`
 }
 
 // ScopeChangeEvent represents when issues were added/removed from sprint
 type ScopeChangeEvent struct {
-	Date      time.Time `json:"date"`
-	IssueID   string    `json:"issue_id"`
-	IssueTitle string   `json:"issue_title"`
-	Action    string    `json:"action"` // "added" or "removed"
+	Date       time.Time `json:"date"`
+	IssueID    string    `json:"issue_id"`
+	IssueTitle string    `json:"issue_title"`
+	Action     string    `json:"action"` // "added" or "removed"
 }
 
 // calculateBurndown computes burndown data for a sprint (bv-159)
@@ -3878,7 +3917,7 @@ func calculateBurndown(sprint *model.Sprint, issues []model.Issue) BurndownOutpu
 	remainingDays := 0
 
 	if !sprint.StartDate.IsZero() && !sprint.EndDate.IsZero() {
-		totalDays = int(sprint.EndDate.Sub(sprint.StartDate).Hours() / 24) + 1
+		totalDays = int(sprint.EndDate.Sub(sprint.StartDate).Hours()/24) + 1
 		if now.Before(sprint.StartDate) {
 			elapsedDays = 0
 			remainingDays = totalDays
