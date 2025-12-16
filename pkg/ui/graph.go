@@ -100,7 +100,7 @@ func (g *GraphModel) rebuildGraph() {
 	// Build relationships
 	for _, issue := range g.issues {
 		for _, dep := range issue.Dependencies {
-			if dep.Type == model.DepBlocks || dep.Type == model.DepParentChild {
+			if dep.Type.IsBlocking() {
 				g.blockers[issue.ID] = append(g.blockers[issue.ID], dep.DependsOnID)
 				g.dependents[dep.DependsOnID] = append(g.dependents[dep.DependsOnID], issue.ID)
 			}
@@ -923,7 +923,6 @@ func smartTruncateID(id string, maxLen int) string {
 		sep = "-"
 	}
 	
-	parts = strings.Split(id, sep)
 	if len(parts) > 2 {
 		var abbrev strings.Builder
 		runeCount := 0

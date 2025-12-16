@@ -202,11 +202,11 @@ func parseDateString(s string) (time.Time, bool) {
 
 // loadFromGit loads issues from a specific commit SHA
 func (g *GitLoader) loadFromGit(sha string) ([]model.Issue, error) {
-	// Try known beads file paths in order
+	// Try known beads file paths in order, matching loader.go precedence
 	paths := []string{
+		".beads/issues.jsonl",
 		".beads/beads.jsonl",
 		".beads/beads.base.jsonl",
-		".beads/issues.jsonl",
 	}
 
 	var lastErr error
@@ -241,9 +241,10 @@ func parseJSONL(data []byte) ([]model.Issue, error) {
 
 	var issues []model.Issue
 	scanner := bufio.NewScanner(bytes.NewReader(data))
-	// Increase buffer size for large lines
+	// Increase buffer size for large lines (issues can be large)
 	const maxCapacity = 1024 * 1024 * 10 // 10MB
-	buf := make([]byte, maxCapacity)
+	// Start with 64KB buffer, grow up to maxCapacity
+	buf := make([]byte, 64*1024)
 	scanner.Buffer(buf, maxCapacity)
 
 	for scanner.Scan() {
