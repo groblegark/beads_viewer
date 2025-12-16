@@ -250,9 +250,37 @@ type Forecast struct {
 	CreatedAt  time.Time `json:"created_at,omitempty"`
 }
 
+// Validate checks if the forecast data is logically valid.
+func (f *Forecast) Validate() error {
+	if f.BeadID == "" {
+		return fmt.Errorf("bead_id cannot be empty")
+	}
+	if f.ETADate.IsZero() {
+		return fmt.Errorf("eta_date cannot be empty")
+	}
+	if f.Confidence < 0 || f.Confidence > 1 {
+		return fmt.Errorf("confidence (%v) must be between 0 and 1", f.Confidence)
+	}
+	return nil
+}
+
 // BurndownPoint represents a single point in a burndown chart
 type BurndownPoint struct {
 	Date      time.Time `json:"date"`
 	Remaining int       `json:"remaining"`
 	Completed int       `json:"completed"`
+}
+
+// Validate checks if the burndown point data is logically valid.
+func (b *BurndownPoint) Validate() error {
+	if b.Date.IsZero() {
+		return fmt.Errorf("date cannot be empty")
+	}
+	if b.Remaining < 0 {
+		return fmt.Errorf("remaining (%d) cannot be negative", b.Remaining)
+	}
+	if b.Completed < 0 {
+		return fmt.Errorf("completed (%d) cannot be negative", b.Completed)
+	}
+	return nil
 }

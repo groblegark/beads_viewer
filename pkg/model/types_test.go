@@ -1,6 +1,8 @@
 package model
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -204,7 +206,7 @@ func TestComment_Struct(t *testing.T) {
 
 func TestIssue_Validate(t *testing.T) {
 	now := time.Now()
-	
+
 	tests := []struct {
 		name    string
 		issue   Issue
@@ -283,5 +285,387 @@ func TestIssue_Validate(t *testing.T) {
 				t.Errorf("Issue.Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestForecast_Validate(t *testing.T) {
+	now := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name     string
+		forecast Forecast
+		wantErr  bool
+	}{
+		{
+			name: "Valid",
+			forecast: Forecast{
+				BeadID:     "bv-123",
+				ETADate:    now.Add(24 * time.Hour),
+				Confidence: 0.7,
+			},
+			wantErr: false,
+		},
+		{
+			name: "Empty BeadID",
+			forecast: Forecast{
+				BeadID:     "",
+				ETADate:    now.Add(24 * time.Hour),
+				Confidence: 0.7,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Zero ETADate",
+			forecast: Forecast{
+				BeadID:     "bv-123",
+				ETADate:    time.Time{},
+				Confidence: 0.7,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Confidence Out Of Range",
+			forecast: Forecast{
+				BeadID:     "bv-123",
+				ETADate:    now.Add(24 * time.Hour),
+				Confidence: 1.5,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.forecast.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Forecast.Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestForecast_JSON(t *testing.T) {
+	eta := time.Date(2025, 2, 1, 12, 0, 0, 0, time.UTC)
+	created := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	f := Forecast{
+		BeadID:     "bv-123",
+		ETADate:    eta,
+		Confidence: 0.42,
+		Factors:    []string{"label=backend"},
+		CreatedAt:  created,
+	}
+
+	data, err := json.Marshal(f)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+
+	var roundTrip Forecast
+	if err := json.Unmarshal(data, &roundTrip); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	if roundTrip.BeadID != f.BeadID {
+		t.Errorf("BeadID mismatch: got %q, want %q", roundTrip.BeadID, f.BeadID)
+	}
+	if !roundTrip.ETADate.Equal(f.ETADate) {
+		t.Errorf("ETADate mismatch: got %v, want %v", roundTrip.ETADate, f.ETADate)
+	}
+	if roundTrip.Confidence != f.Confidence {
+		t.Errorf("Confidence mismatch: got %v, want %v", roundTrip.Confidence, f.Confidence)
+	}
+	if len(roundTrip.Factors) != 1 || roundTrip.Factors[0] != "label=backend" {
+		t.Errorf("Factors mismatch: got %#v", roundTrip.Factors)
+	}
+	if !roundTrip.CreatedAt.Equal(f.CreatedAt) {
+		t.Errorf("CreatedAt mismatch: got %v, want %v", roundTrip.CreatedAt, f.CreatedAt)
+	}
+
+	empty := Forecast{
+		BeadID:     "bv-123",
+		ETADate:    eta,
+		Confidence: 0.42,
+	}
+	emptyJSON, err := json.Marshal(empty)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	if strings.Contains(string(emptyJSON), "factors") {
+		t.Errorf("Expected factors to be omitted when empty: %s", emptyJSON)
+	}
+	// Note: time.Time with omitempty doesn't omit zero values in Go's JSON encoder.
+	// This is a Go limitation - struct types are never considered "empty" for omitempty.
+}
+
+func TestBurndownPoint_Validate(t *testing.T) {
+	d := time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name    string
+		point   BurndownPoint
+		wantErr bool
+	}{
+		{
+			name: "Valid",
+			point: BurndownPoint{
+				Date:      d,
+				Remaining: 10,
+				Completed: 5,
+			},
+			wantErr: false,
+		},
+		{
+			name: "Zero Date",
+			point: BurndownPoint{
+				Date:      time.Time{},
+				Remaining: 10,
+				Completed: 5,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Negative Remaining",
+			point: BurndownPoint{
+				Date:      d,
+				Remaining: -1,
+				Completed: 0,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Negative Completed",
+			point: BurndownPoint{
+				Date:      d,
+				Remaining: 0,
+				Completed: -1,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.point.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("BurndownPoint.Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestBurndownPoint_JSON(t *testing.T) {
+	p := BurndownPoint{
+		Date:      time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC),
+		Remaining: 10,
+		Completed: 5,
+	}
+
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+
+	var roundTrip BurndownPoint
+	if err := json.Unmarshal(data, &roundTrip); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	if !roundTrip.Date.Equal(p.Date) || roundTrip.Remaining != p.Remaining || roundTrip.Completed != p.Completed {
+		t.Errorf("Round-trip mismatch: got %#v, want %#v", roundTrip, p)
+	}
+}
+
+// Additional Sprint/Forecast type tests (bv-nnsc)
+
+func TestSprint_Struct(t *testing.T) {
+	now := time.Now()
+	later := now.AddDate(0, 0, 14)
+
+	sprint := Sprint{
+		ID:             "sprint-1",
+		Name:           "Test Sprint",
+		StartDate:      now,
+		EndDate:        later,
+		BeadIDs:        []string{"bv-1", "bv-2", "bv-3"},
+		VelocityTarget: 25.5,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	if sprint.ID != "sprint-1" {
+		t.Errorf("Sprint ID mismatch: got %s", sprint.ID)
+	}
+	if len(sprint.BeadIDs) != 3 {
+		t.Errorf("BeadIDs length mismatch: got %d, want 3", len(sprint.BeadIDs))
+	}
+	if sprint.VelocityTarget != 25.5 {
+		t.Errorf("VelocityTarget mismatch: got %f", sprint.VelocityTarget)
+	}
+}
+
+func TestForecast_Struct(t *testing.T) {
+	now := time.Now()
+	eta := now.AddDate(0, 0, 5)
+
+	forecast := Forecast{
+		BeadID:     "bv-123",
+		ETADate:    eta,
+		Confidence: 0.75,
+		Factors:    []string{"estimate: explicit (120m)", "type: task×1.0"},
+		CreatedAt:  now,
+	}
+
+	if forecast.BeadID != "bv-123" {
+		t.Errorf("BeadID mismatch: got %s", forecast.BeadID)
+	}
+	if forecast.Confidence != 0.75 {
+		t.Errorf("Confidence mismatch: got %f", forecast.Confidence)
+	}
+	if len(forecast.Factors) != 2 {
+		t.Errorf("Factors length mismatch: got %d, want 2", len(forecast.Factors))
+	}
+	if !forecast.ETADate.Equal(eta) {
+		t.Errorf("ETADate mismatch: got %v, want %v", forecast.ETADate, eta)
+	}
+}
+
+func TestBurndownPoint_Struct(t *testing.T) {
+	now := time.Now()
+
+	point := BurndownPoint{
+		Date:      now,
+		Remaining: 15,
+		Completed: 10,
+	}
+
+	if point.Remaining != 15 {
+		t.Errorf("Remaining mismatch: got %d", point.Remaining)
+	}
+	if point.Completed != 10 {
+		t.Errorf("Completed mismatch: got %d", point.Completed)
+	}
+	if !point.Date.Equal(now) {
+		t.Errorf("Date mismatch")
+	}
+}
+
+func TestIssue_Clone(t *testing.T) {
+	now := time.Now()
+	closedAt := now.Add(-1 * time.Hour)
+	estimatedMinutes := 60
+	externalRef := "JIRA-123"
+	compactedAt := now.Add(-2 * time.Hour)
+	compactedAtCommit := "abc123"
+
+	original := Issue{
+		ID:                "TEST-1",
+		Title:             "Test Issue",
+		Description:       "Description",
+		Status:            StatusOpen,
+		Priority:          1,
+		IssueType:         TypeBug,
+		Assignee:          "user",
+		EstimatedMinutes:  &estimatedMinutes,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		ClosedAt:          &closedAt,
+		ExternalRef:       &externalRef,
+		CompactedAt:       &compactedAt,
+		CompactedAtCommit: &compactedAtCommit,
+		Labels:            []string{"bug", "critical"},
+		Dependencies: []*Dependency{
+			{IssueID: "TEST-1", DependsOnID: "TEST-2", Type: DepBlocks},
+		},
+		Comments: []*Comment{
+			{ID: 1, IssueID: "TEST-1", Author: "user", Text: "comment"},
+		},
+	}
+
+	clone := original.Clone()
+
+	// Verify basic field equality
+	if clone.ID != original.ID {
+		t.Errorf("ID mismatch")
+	}
+	if clone.Title != original.Title {
+		t.Errorf("Title mismatch")
+	}
+
+	// Verify pointer fields are deep copied
+	if clone.EstimatedMinutes == original.EstimatedMinutes {
+		t.Errorf("EstimatedMinutes should be a new pointer")
+	}
+	if *clone.EstimatedMinutes != *original.EstimatedMinutes {
+		t.Errorf("EstimatedMinutes value mismatch")
+	}
+
+	if clone.ClosedAt == original.ClosedAt {
+		t.Errorf("ClosedAt should be a new pointer")
+	}
+	if !clone.ClosedAt.Equal(*original.ClosedAt) {
+		t.Errorf("ClosedAt value mismatch")
+	}
+
+	// Verify slice fields are deep copied
+	if &clone.Labels == &original.Labels {
+		t.Errorf("Labels should be a new slice")
+	}
+	if len(clone.Labels) != len(original.Labels) {
+		t.Errorf("Labels length mismatch")
+	}
+
+	// Verify modifying clone doesn't affect original
+	*clone.EstimatedMinutes = 120
+	if *original.EstimatedMinutes != 60 {
+		t.Errorf("Modifying clone affected original EstimatedMinutes")
+	}
+
+	clone.Labels[0] = "modified"
+	if original.Labels[0] != "bug" {
+		t.Errorf("Modifying clone affected original Labels")
+	}
+
+	// Verify Dependencies are deep copied
+	if len(clone.Dependencies) != 1 {
+		t.Errorf("Dependencies length mismatch")
+	}
+	if clone.Dependencies[0] == original.Dependencies[0] {
+		t.Errorf("Dependencies[0] should be a new pointer")
+	}
+
+	// Verify Comments are deep copied
+	if len(clone.Comments) != 1 {
+		t.Errorf("Comments length mismatch")
+	}
+	if clone.Comments[0] == original.Comments[0] {
+		t.Errorf("Comments[0] should be a new pointer")
+	}
+}
+
+func TestIssue_Clone_NilFields(t *testing.T) {
+	original := Issue{
+		ID:        "TEST-1",
+		Title:     "Test",
+		Status:    StatusOpen,
+		IssueType: TypeTask,
+	}
+
+	clone := original.Clone()
+
+	if clone.EstimatedMinutes != nil {
+		t.Errorf("EstimatedMinutes should be nil")
+	}
+	if clone.ClosedAt != nil {
+		t.Errorf("ClosedAt should be nil")
+	}
+	if clone.Labels != nil {
+		t.Errorf("Labels should be nil")
+	}
+	if clone.Dependencies != nil {
+		t.Errorf("Dependencies should be nil")
+	}
+	if clone.Comments != nil {
+		t.Errorf("Comments should be nil")
 	}
 }
