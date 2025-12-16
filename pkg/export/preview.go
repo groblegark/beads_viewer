@@ -70,7 +70,7 @@ func (p *PreviewServer) Start() error {
 
 	fmt.Printf("\nPreview server running at http://localhost:%d\n", p.port)
 	fmt.Printf("Serving: %s\n", p.bundlePath)
-	fmt.Println("\nPress Ctrl+C to stop\n")
+	fmt.Println("\nPress Ctrl+C to stop")
 
 	return p.server.ListenAndServe()
 }
@@ -263,7 +263,7 @@ func StartPreviewWithConfig(config PreviewConfig) error {
 	if !config.Quiet {
 		fmt.Printf("\nPreview server running at http://localhost:%d\n", port)
 		fmt.Printf("Serving: %s\n", config.BundlePath)
-		fmt.Println("\nPress Ctrl+C to stop\n")
+		fmt.Println("\nPress Ctrl+C to stop")
 	}
 
 	// Channel to receive OS signals
