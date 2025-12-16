@@ -473,7 +473,10 @@ function getNodeColor(node) {
     // Critical path nodes get red/orange highlight
     if (node._criticalPathState === 'active') return THEME.accent.red;
 
-    // Cycle nodes get special color
+    // Cycle navigator highlight (current cycle)
+    if (node._cycleHighlight) return THEME.accent.red;
+
+    // Cycle nodes get special color (all cycles, dimmer)
     if (node.inCycle) return THEME.accent.pink;
 
     // Highlighted nodes
@@ -520,6 +523,16 @@ function drawNode(node, ctx, globalScale) {
     else if (node._criticalPathState === 'active') {
         ctx.shadowColor = THEME.accent.red;
         ctx.shadowBlur = 22;
+    }
+    // Cycle navigator glow (highlighted cycle)
+    else if (node._cycleHighlight) {
+        ctx.shadowColor = THEME.accent.red;
+        ctx.shadowBlur = 25;
+    }
+    // Cycle member glow (any cycle)
+    else if (node.inCycle) {
+        ctx.shadowColor = THEME.accent.pink;
+        ctx.shadowBlur = 15;
     }
     // Glow effect for important nodes (PageRank sums to 1.0, so threshold ~2x average)
     else if (node.pagerank > 0.03 || isHovered || isSelected) {
@@ -1320,6 +1333,239 @@ export function highlightCycles() {
 }
 
 // ============================================================================
+// CYCLE NAVIGATOR
+// ============================================================================
+
+// Cycle navigator state
+const cycleNavigatorState = {
+    active: false,
+    cycles: [],           // Array of cycles (each cycle is array of node IDs)
+    currentIndex: 0,
+    highlightedCycleNodes: new Set(),
+    highlightedCycleEdges: new Set()
+};
+
+/**
+ * Initialize cycle navigator with detected cycles
+ */
+export function initCycleNavigator() {
+    if (!store.metrics.cycles?.cycles?.length) {
+        cycleNavigatorState.active = false;
+        cycleNavigatorState.cycles = [];
+        cycleNavigatorState.currentIndex = 0;
+        dispatchEvent('cycleNavigatorInit', { hasCycles: false, cycleCount: 0 });
+        return null;
+    }
+
+    // Convert cycle indices to node IDs
+    cycleNavigatorState.cycles = store.metrics.cycles.cycles.map(cycle =>
+        cycle.map(idx => store.wasmGraph?.nodeId(idx)).filter(Boolean)
+    ).filter(cycle => cycle.length > 0);
+
+    cycleNavigatorState.currentIndex = 0;
+    cycleNavigatorState.active = cycleNavigatorState.cycles.length > 0;
+
+    dispatchEvent('cycleNavigatorInit', {
+        hasCycles: cycleNavigatorState.active,
+        cycleCount: cycleNavigatorState.cycles.length
+    });
+
+    return {
+        cycleCount: cycleNavigatorState.cycles.length,
+        cycles: cycleNavigatorState.cycles
+    };
+}
+
+/**
+ * Highlight a specific cycle by index
+ * @param {number} index - Zero-based cycle index
+ * @param {boolean} zoom - Whether to zoom to fit the cycle
+ */
+export function highlightCycle(index, zoom = false) {
+    if (!cycleNavigatorState.active || cycleNavigatorState.cycles.length === 0) {
+        return null;
+    }
+
+    // Clamp index to valid range
+    index = Math.max(0, Math.min(index, cycleNavigatorState.cycles.length - 1));
+    cycleNavigatorState.currentIndex = index;
+
+    const cycle = cycleNavigatorState.cycles[index];
+    if (!cycle || cycle.length === 0) return null;
+
+    // Clear previous highlights
+    store.highlightedNodes.clear();
+    store.highlightedLinks.clear();
+
+    // Highlight cycle nodes
+    cycleNavigatorState.highlightedCycleNodes.clear();
+    cycle.forEach(nodeId => {
+        store.highlightedNodes.add(nodeId);
+        cycleNavigatorState.highlightedCycleNodes.add(nodeId);
+    });
+
+    // Highlight cycle edges (including wraparound edge)
+    cycleNavigatorState.highlightedCycleEdges.clear();
+    for (let i = 0; i < cycle.length; i++) {
+        const from = cycle[i];
+        const to = cycle[(i + 1) % cycle.length];
+        const edgeId = `${from}-${to}`;
+        store.highlightedLinks.add(edgeId);
+        cycleNavigatorState.highlightedCycleEdges.add(edgeId);
+    }
+
+    // Mark nodes with cycle state for enhanced visual
+    const graphData = store.graph?.graphData();
+    if (graphData) {
+        graphData.nodes.forEach(node => {
+            node._cycleHighlight = cycleNavigatorState.highlightedCycleNodes.has(node.id);
+        });
+    }
+
+    store.graph?.refresh();
+
+    // Zoom to cycle if requested
+    if (zoom) {
+        zoomToCycle(index);
+    }
+
+    dispatchEvent('cycleHighlightChange', {
+        currentIndex: index,
+        cycleCount: cycleNavigatorState.cycles.length,
+        cycle: cycle,
+        cyclePath: formatCyclePath(cycle)
+    });
+
+    return {
+        index,
+        cycle,
+        path: formatCyclePath(cycle)
+    };
+}
+
+/**
+ * Navigate to the next cycle
+ */
+export function nextCycle() {
+    if (!cycleNavigatorState.active) return null;
+    const nextIndex = (cycleNavigatorState.currentIndex + 1) % cycleNavigatorState.cycles.length;
+    return highlightCycle(nextIndex, true);
+}
+
+/**
+ * Navigate to the previous cycle
+ */
+export function prevCycle() {
+    if (!cycleNavigatorState.active) return null;
+    const prevIndex = (cycleNavigatorState.currentIndex - 1 + cycleNavigatorState.cycles.length) % cycleNavigatorState.cycles.length;
+    return highlightCycle(prevIndex, true);
+}
+
+/**
+ * Zoom to fit a specific cycle
+ * @param {number} index - Zero-based cycle index
+ */
+export function zoomToCycle(index = cycleNavigatorState.currentIndex) {
+    if (!cycleNavigatorState.active || !store.graph) return;
+
+    const cycle = cycleNavigatorState.cycles[index];
+    if (!cycle || cycle.length === 0) return;
+
+    // Get node coordinates
+    const graphData = store.graph.graphData();
+    const cycleNodes = graphData.nodes.filter(n => cycle.includes(n.id));
+
+    if (cycleNodes.length === 0) return;
+
+    // Compute bounds
+    const xs = cycleNodes.map(n => n.x);
+    const ys = cycleNodes.map(n => n.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+
+    // Center on cycle with some padding
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const width = maxX - minX + 100;
+    const height = maxY - minY + 100;
+
+    // Calculate zoom level to fit cycle
+    const containerWidth = store.container?.clientWidth || 800;
+    const containerHeight = store.container?.clientHeight || 600;
+    const scaleX = containerWidth / width;
+    const scaleY = containerHeight / height;
+    const scale = Math.min(scaleX, scaleY, 2.5); // Cap at 2.5x zoom
+
+    store.graph.centerAt(centerX, centerY, 400);
+    store.graph.zoom(scale, 400);
+
+    dispatchEvent('cycleZoom', { index, cycle, center: { x: centerX, y: centerY }, scale });
+}
+
+/**
+ * Reset cycle navigator state
+ */
+export function resetCycleNavigator() {
+    cycleNavigatorState.active = false;
+    cycleNavigatorState.currentIndex = 0;
+    cycleNavigatorState.highlightedCycleNodes.clear();
+    cycleNavigatorState.highlightedCycleEdges.clear();
+
+    // Clear cycle highlight state from nodes
+    const graphData = store.graph?.graphData();
+    if (graphData) {
+        graphData.nodes.forEach(node => {
+            delete node._cycleHighlight;
+        });
+    }
+
+    store.highlightedNodes.clear();
+    store.highlightedLinks.clear();
+    store.graph?.refresh();
+
+    dispatchEvent('cycleNavigatorReset');
+}
+
+/**
+ * Toggle cycle navigator (highlight all cycles or reset)
+ */
+export function toggleCycleNavigator() {
+    if (cycleNavigatorState.active && cycleNavigatorState.highlightedCycleNodes.size > 0) {
+        resetCycleNavigator();
+    } else {
+        initCycleNavigator();
+        if (cycleNavigatorState.cycles.length > 0) {
+            highlightCycle(0, true);
+        } else {
+            showToast('No cycles detected in the graph', 'info');
+        }
+    }
+}
+
+/**
+ * Get current cycle navigator state
+ */
+export function getCycleNavigatorState() {
+    return {
+        active: cycleNavigatorState.active,
+        cycleCount: cycleNavigatorState.cycles.length,
+        currentIndex: cycleNavigatorState.currentIndex,
+        currentCycle: cycleNavigatorState.cycles[cycleNavigatorState.currentIndex] || [],
+        currentPath: formatCyclePath(cycleNavigatorState.cycles[cycleNavigatorState.currentIndex] || [])
+    };
+}
+
+/**
+ * Format a cycle as a readable path string
+ */
+function formatCyclePath(cycle) {
+    if (!cycle || cycle.length === 0) return '';
+    return cycle.join(' → ') + ' → ' + cycle[0];
+}
+
+// ============================================================================
 // FILTERING
 // ============================================================================
 
@@ -1490,7 +1736,19 @@ function setupKeyboardShortcuts() {
                 toggleCriticalPath();
                 break;
             case 'y':
-                highlightCycles();
+                toggleCycleNavigator();
+                break;
+            case '[':
+                // Previous cycle
+                if (cycleNavigatorState.active) {
+                    prevCycle();
+                }
+                break;
+            case ']':
+                // Next cycle
+                if (cycleNavigatorState.active) {
+                    nextCycle();
+                }
                 break;
             case '?':
                 dispatchEvent('helpRequest');
@@ -1668,6 +1926,18 @@ export function cleanup() {
     }
     store.graph = null;
 }
+
+// Export cycle navigator functions
+export {
+    initCycleNavigator,
+    highlightCycle,
+    nextCycle,
+    prevCycle,
+    zoomToCycle,
+    resetCycleNavigator,
+    toggleCycleNavigator,
+    getCycleNavigatorState
+};
 
 // Export constants
 export { THEME, VIEW_MODES, TYPE_ICONS };
