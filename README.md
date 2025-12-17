@@ -1298,6 +1298,13 @@ We don't just test on "happy path" data. The test suite (`pkg/loader/synthetic_t
 In a git-based workflow, merge conflicts and partial writes happen. The `TestLoadIssuesRobustness` suite explicitly injects garbage lines and corrupted JSON into the data stream.
 *   **Result:** `bv` detects corruption, logs a warning to `stderr`, and continues loading the valid data. It never crashes the user session due to a single bad line.
 
+### Contributing Tests
+For contributors writing tests, see the comprehensive **[Testing Guide](docs/testing.md)** which covers:
+- Test philosophy (no mocks, table-driven tests, golden files)
+- Using the `testutil` package for fixture generation
+- Running tests, coverage, and benchmarks
+- E2E test patterns and CI integration
+
 ---
 
 ## 🔄 The Zero-Friction Update Engine
