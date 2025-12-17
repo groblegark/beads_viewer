@@ -34,7 +34,7 @@ type shortcutSection struct {
 func NewShortcutsSidebar(theme Theme) ShortcutsSidebar {
 	return ShortcutsSidebar{
 		theme:   theme,
-		width:   28, // Fixed width for sidebar
+		width:   34, // Fixed width for sidebar (increased for readability)
 		context: "list",
 	}
 }
@@ -92,33 +92,34 @@ func (s *ShortcutsSidebar) allSections() []shortcutSection {
 			title:    "Navigation",
 			contexts: []string{}, // All contexts
 			items: []shortcutItem{
-				{"j/k", "Move down/up"},
-				{"G/home", "Go to end/start"},
-				{"Ctrl+d/u", "Page down/up"},
-				{"Enter", "View details"},
-				{"Esc", "Back / close"},
+				{"j/k", "Move ↓/↑"},
+				{"G/gg", "End/Start"},
+				{"^d/^u", "Page ↓/↑"},
+				{"Enter", "Details"},
+				{"Esc", "Back"},
 			},
 		},
 		{
 			title:    "Views",
 			contexts: []string{"list", "detail", "split"},
 			items: []shortcutItem{
-				{"a", "Actionable view"},
-				{"b", "Kanban board"},
-				{"g", "Graph view"},
-				{"h", "History view"},
-				{"i", "Insights panel"},
-				{"?", "Help overlay"},
-				{";", "Toggle sidebar"},
+				{"a", "Actionable"},
+				{"b", "Board"},
+				{"g", "Graph"},
+				{"h", "History"},
+				{"i", "Insights"},
+				{"?", "Help"},
+				{";", "This sidebar"},
+				{"p", "Priority ↑↓"},
 			},
 		},
 		{
 			title:    "Graph",
 			contexts: []string{"graph"},
 			items: []shortcutItem{
-				{"h/j/k/l", "Navigate nodes"},
-				{"H/L", "Scroll left/right"},
-				{"PgUp/Dn", "Scroll up/down"},
+				{"hjkl", "Navigate"},
+				{"H/L", "Scroll ←/→"},
+				{"PgUp/Dn", "Scroll ↑/↓"},
 				{"Enter", "Jump to issue"},
 			},
 		},
@@ -126,11 +127,11 @@ func (s *ShortcutsSidebar) allSections() []shortcutSection {
 			title:    "Insights",
 			contexts: []string{"insights"},
 			items: []shortcutItem{
-				{"h/l/Tab", "Switch panels"},
-				{"j/k", "Navigate items"},
+				{"h/l", "Switch panel"},
+				{"j/k", "Select item"},
 				{"e", "Explanations"},
-				{"x", "Calc details"},
-				{"m", "Toggle heatmap"},
+				{"x", "Calc proof"},
+				{"m", "Heatmap"},
 				{"Enter", "Jump to issue"},
 			},
 		},
@@ -138,9 +139,9 @@ func (s *ShortcutsSidebar) allSections() []shortcutSection {
 			title:    "History",
 			contexts: []string{"history"},
 			items: []shortcutItem{
-				{"j/k", "Navigate beads"},
-				{"J/K", "Navigate commits"},
-				{"Tab", "Toggle focus"},
+				{"j/k", "Beads ↓/↑"},
+				{"J/K", "Commits ↓/↑"},
+				{"Tab", "Focus toggle"},
 				{"y", "Copy SHA"},
 				{"c", "Cycle filter"},
 			},
@@ -149,20 +150,20 @@ func (s *ShortcutsSidebar) allSections() []shortcutSection {
 			title:    "Board",
 			contexts: []string{"board"},
 			items: []shortcutItem{
-				{"h/l", "Switch columns"},
-				{"j/k", "Navigate items"},
-				{"Enter", "View details"},
+				{"h/l", "Columns ←/→"},
+				{"j/k", "Items ↓/↑"},
+				{"Enter", "Details"},
 			},
 		},
 		{
 			title:    "Filters",
 			contexts: []string{"list", "split"},
 			items: []shortcutItem{
-				{"o", "Open issues"},
-				{"c", "Closed issues"},
-				{"r", "Ready (unblocked)"},
+				{"o", "Open only"},
+				{"c", "Closed only"},
+				{"r", "Ready (no blocks)"},
 				{"L", "Label picker"},
-				{"/", "Fuzzy search"},
+				{"/", "Search"},
 			},
 		},
 		{
@@ -170,9 +171,9 @@ func (s *ShortcutsSidebar) allSections() []shortcutSection {
 			contexts: []string{"list", "detail", "split"},
 			items: []shortcutItem{
 				{"t/T", "Time-travel"},
-				{"x", "Export Markdown"},
-				{"C", "Copy to clipboard"},
-				{"O", "Open in editor"},
+				{"x", "Export .md"},
+				{"C", "Copy"},
+				{"O", "Open in $EDITOR"},
 				{"R", "Recipe picker"},
 			},
 		},
@@ -198,7 +199,7 @@ func (s *ShortcutsSidebar) View() string {
 	keyStyle := t.Renderer.NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#7D56F4", Dark: "#BD93F9"}).
 		Bold(true).
-		Width(10)
+		Width(8)
 
 	descStyle := t.Renderer.NewStyle().
 		Foreground(t.Base.GetForeground())

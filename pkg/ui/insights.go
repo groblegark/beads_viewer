@@ -8,6 +8,7 @@ import (
 	"github.com/Dicklesworthstone/beads_viewer/pkg/analysis"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -44,91 +45,91 @@ var metricDescriptions = map[MetricPanel]MetricInfo{
 		Icon:        "🚧",
 		Title:       "Bottlenecks",
 		ShortDesc:   "Betweenness Centrality",
-		WhatIs:      "Measures how often a bead lies on shortest paths between other beads.",
-		WhyUseful:   "High-scoring beads are critical junctions. Delays here ripple across the project.",
-		HowToUse:    "Prioritize these to unblock parallel workstreams. Consider breaking them into smaller pieces.",
-		FormulaHint: "BW(v) = Σ (σst(v) / σst) for all s≠v≠t",
+		WhatIs:      "Measures how often a bead lies on **shortest paths** between other beads in the dependency graph.",
+		WhyUseful:   "High-scoring beads are *critical junctions*. Delays here ripple across the entire project.",
+		HowToUse:    "**Prioritize** these to unblock parallel workstreams. Consider breaking them into smaller pieces.",
+		FormulaHint: "`BW(v) = Σ (σst(v) / σst)` for all s≠v≠t",
 	},
 	PanelKeystones: {
 		Icon:        "🏛️",
 		Title:       "Keystones",
 		ShortDesc:   "Impact Depth",
-		WhatIs:      "Measures how deep in the dependency chain a bead sits (downstream chain length).",
-		WhyUseful:   "Keystones are foundational. Everything above them depends on their completion.",
-		HowToUse:    "Complete these first. Blocking a keystone blocks the entire chain above it.",
-		FormulaHint: "Impact(v) = 1 + max(Impact(u)) for all u that depend on v",
+		WhatIs:      "Measures how **deep** in the dependency chain a bead sits (downstream chain length).",
+		WhyUseful:   "Keystones are *foundational*. Everything above them depends on their completion.",
+		HowToUse:    "**Complete these first.** Blocking a keystone blocks the entire chain above it.",
+		FormulaHint: "`Impact(v) = 1 + max(Impact(u))` for all u depending on v",
 	},
 	PanelInfluencers: {
 		Icon:        "🌐",
 		Title:       "Influencers",
 		ShortDesc:   "Eigenvector Centrality",
-		WhatIs:      "Scores beads by their connections to other well-connected beads.",
-		WhyUseful:   "Influencers are connected to important beads. Changes here have wide-reaching effects.",
-		HowToUse:    "Review these carefully before changes. They're central to the project structure.",
-		FormulaHint: "EV(v) = (1/λ) × Σ A[v,u] × EV(u)",
+		WhatIs:      "Scores beads by their connections to other **well-connected** beads.",
+		WhyUseful:   "Influencers are connected to *important* beads. Changes here have wide-reaching effects.",
+		HowToUse:    "**Review carefully** before changes. They're central to project structure.",
+		FormulaHint: "`EV(v) = (1/λ) × Σ A[v,u] × EV(u)`",
 	},
 	PanelHubs: {
 		Icon:        "🛰️",
 		Title:       "Hubs",
 		ShortDesc:   "HITS Hub Score",
-		WhatIs:      "Beads that depend on many important authorities (aggregators).",
-		WhyUseful:   "Hubs collect dependencies. They often represent high-level features or epics.",
-		HowToUse:    "Track these for project milestones. Their completion signals major progress.",
-		FormulaHint: "Hub(v) = Σ Authority(u) for all u where v→u",
+		WhatIs:      "Beads that **depend on** many important authorities (aggregators).",
+		WhyUseful:   "Hubs collect dependencies. They often represent *high-level features* or epics.",
+		HowToUse:    "**Track for milestones.** Their completion signals major project progress.",
+		FormulaHint: "`Hub(v) = Σ Authority(u)` for all u where v→u",
 	},
 	PanelAuthorities: {
 		Icon:        "📚",
 		Title:       "Authorities",
 		ShortDesc:   "HITS Authority Score",
-		WhatIs:      "Beads that are depended upon by many important hubs (providers).",
-		WhyUseful:   "Authorities are foundational services/components that many features need.",
-		HowToUse:    "Stabilize these early. Breaking an authority breaks many dependent hubs.",
-		FormulaHint: "Auth(v) = Σ Hub(u) for all u where u→v",
+		WhatIs:      "Beads that are **depended upon** by many important hubs (providers).",
+		WhyUseful:   "Authorities are *foundational services/components* that many features need.",
+		HowToUse:    "**Stabilize early.** Breaking an authority breaks many dependent hubs.",
+		FormulaHint: "`Auth(v) = Σ Hub(u)` for all u where u→v",
 	},
 	PanelCores: {
 		Icon:        "🧠",
 		Title:       "Cores",
 		ShortDesc:   "k-core Cohesion",
-		WhatIs:      "Highest k-core numbers (nodes embedded in dense subgraphs).",
-		WhyUseful:   "High-core nodes sit in tightly knit clusters—changing them can ripple locally.",
-		HowToUse:    "Use for resilience checks; prioritize when breaking apart tightly coupled areas.",
-		FormulaHint: "Max k such that node remains in k-core after peeling",
+		WhatIs:      "Nodes with highest **k-core numbers** (embedded in dense subgraphs).",
+		WhyUseful:   "High-core nodes sit in *tightly knit clusters*—changes can ripple locally.",
+		HowToUse:    "Use for **resilience checks**; prioritize when breaking apart tightly coupled areas.",
+		FormulaHint: "Max `k` such that node remains in k-core after peeling",
 	},
 	PanelArticulation: {
 		Icon:        "🪢",
 		Title:       "Cut Points",
 		ShortDesc:   "Articulation Vertices",
-		WhatIs:      "Nodes whose removal disconnects the undirected graph.",
-		WhyUseful:   "Single points of failure. Instability here can isolate workstreams.",
-		HowToUse:    "Harden or split these nodes; avoid piling more dependencies onto them.",
+		WhatIs:      "Nodes whose **removal disconnects** the undirected graph.",
+		WhyUseful:   "*Single points of failure.* Instability here can isolate workstreams.",
+		HowToUse:    "**Harden or split** these nodes; avoid piling more dependencies onto them.",
 		FormulaHint: "Tarjan articulation detection on undirected view",
 	},
 	PanelSlack: {
 		Icon:        "⏳",
 		Title:       "Slack",
 		ShortDesc:   "Longest-path slack",
-		WhatIs:      "Distance from the critical chain (0 = on critical path; higher = parallel-friendly).",
-		WhyUseful:   "Zero-slack tasks are schedule-critical; high-slack tasks can fill gaps without blocking.",
-		HowToUse:    "Schedule zero-slack tasks early; slot high-slack tasks when waiting on blockers.",
-		FormulaHint: "Slack(v) = max_path_len - dist_start(v) - dist_end(v)",
+		WhatIs:      "Distance from **critical chain** (`0` = critical path; higher = parallel-friendly).",
+		WhyUseful:   "Zero-slack tasks are *schedule-critical*; high-slack can fill gaps without blocking.",
+		HowToUse:    "**Schedule zero-slack early**; slot high-slack tasks when waiting on blockers.",
+		FormulaHint: "`Slack(v) = max_path_len - dist_start(v) - dist_end(v)`",
 	},
 	PanelCycles: {
 		Icon:        "🔄",
 		Title:       "Cycles",
 		ShortDesc:   "Circular Dependencies",
-		WhatIs:      "Groups of beads that form dependency loops (A→B→C→A).",
-		WhyUseful:   "Cycles indicate structural problems. They can't be resolved in sequence.",
-		HowToUse:    "Break cycles by removing or reversing a dependency. Refactor to decouple.",
+		WhatIs:      "Groups of beads forming **dependency loops** (A→B→C→A).",
+		WhyUseful:   "Cycles indicate *structural problems*. They can't be resolved in sequence.",
+		HowToUse:    "**Break cycles** by removing or reversing a dependency. Refactor to decouple.",
 		FormulaHint: "Detected via Tarjan's SCC algorithm",
 	},
 	PanelPriority: {
 		Icon:        "🎯",
 		Title:       "Priority",
 		ShortDesc:   "Agent-First Triage",
-		WhatIs:      "AI-computed recommendations combining multiple signals into actionable picks.",
-		WhyUseful:   "Provides the single best answer for 'what should I work on next?'",
-		HowToUse:    "Work items top to bottom. High scores = high impact. Check unblocks count.",
-		FormulaHint: "Score = Σ(PageRank + Betweenness + BlockerRatio + Staleness + Priority + TimeToImpact + Urgency + Risk)",
+		WhatIs:      "AI-computed recommendations combining **multiple signals** into actionable picks.",
+		WhyUseful:   "Provides the *single best answer* for 'what should I work on next?'",
+		HowToUse:    "**Work top to bottom.** High scores = high impact. Check unblocks count.",
+		FormulaHint: "`Score = Σ(PageRank + Betweenness + BlockerRatio + ...)`",
 	},
 }
 
@@ -160,6 +161,11 @@ type InsightsModel struct {
 	showDetailPanel  bool
 	showHeatmap      bool // Toggle between list and heatmap view (bv-95)
 
+	// Markdown rendering for detail panel (bv-ui-polish)
+	mdRenderer    *MarkdownRenderer
+	detailVP      viewport.Model
+	detailContent string // cached markdown content
+
 	// Dimensions
 	width  int
 	height int
@@ -168,13 +174,25 @@ type InsightsModel struct {
 
 // NewInsightsModel creates a new interactive insights model
 func NewInsightsModel(ins analysis.Insights, issueMap map[string]*model.Issue, theme Theme) InsightsModel {
+	// Initialize markdown renderer with theme for consistent styling
+	mdRenderer := NewMarkdownRendererWithTheme(50, theme)
+
+	// Initialize viewport for detail panel scrolling
+	vp := viewport.New(50, 20)
+	vp.Style = theme.Renderer.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(theme.Primary).
+		Padding(0, 1)
+
 	return InsightsModel{
 		insights:         ins,
 		issueMap:         issueMap,
 		theme:            theme,
-		showExplanations: true, // Visible by default
-		showCalculation:  true, // Always show calculation details
+		showExplanations: true,  // Visible by default
+		showCalculation:  true,  // Always show calculation details
 		showDetailPanel:  true,
+		mdRenderer:       mdRenderer,
+		detailVP:         vp,
 	}
 }
 
@@ -182,6 +200,16 @@ func (m *InsightsModel) SetSize(w, h int) {
 	m.width = w
 	m.height = h
 	m.ready = true
+
+	// Update detail panel viewport and markdown renderer dimensions
+	if m.showDetailPanel && w > 120 {
+		detailWidth := min(60, w/3)
+		m.detailVP.Width = detailWidth - 4 // Account for border/padding
+		m.detailVP.Height = h - 4
+		if m.mdRenderer != nil {
+			m.mdRenderer.SetWidthWithTheme(detailWidth-6, m.theme)
+		}
+	}
 }
 
 func (m *InsightsModel) SetInsights(ins analysis.Insights) {
@@ -1325,6 +1353,220 @@ func (m *InsightsModel) renderCycleChain(cycle []string, maxWidth int, t Theme) 
 	return chain
 }
 
+// buildDetailMarkdown generates markdown content for the detail panel
+func (m *InsightsModel) buildDetailMarkdown(selectedID string) string {
+	issue := m.issueMap[selectedID]
+	if issue == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+
+	// === HEADER: Title with Type Icon ===
+	sb.WriteString(fmt.Sprintf("# %s %s\n\n", GetTypeIconMD(string(issue.IssueType)), issue.Title))
+
+	// === Meta Table ===
+	sb.WriteString("| Field | Value |\n|---|---|\n")
+	sb.WriteString(fmt.Sprintf("| **ID** | `%s` |\n", issue.ID))
+	sb.WriteString(fmt.Sprintf("| **Status** | **%s** |\n", strings.ToUpper(string(issue.Status))))
+	sb.WriteString(fmt.Sprintf("| **Priority** | %s P%d |\n", GetPriorityIcon(issue.Priority), issue.Priority))
+	if issue.Assignee != "" {
+		sb.WriteString(fmt.Sprintf("| **Assignee** | @%s |\n", issue.Assignee))
+	}
+	sb.WriteString(fmt.Sprintf("| **Created** | %s |\n", issue.CreatedAt.Format("2006-01-02")))
+	sb.WriteString("\n")
+
+	// === Labels ===
+	if len(issue.Labels) > 0 {
+		sb.WriteString(fmt.Sprintf("**Labels:** `%s`\n\n", strings.Join(issue.Labels, "` `")))
+	}
+
+	// === Graph Metrics Section ===
+	if m.insights.Stats != nil {
+		stats := m.insights.Stats
+		sb.WriteString("### 📊 Graph Analysis\n\n")
+
+		// Core metrics in a compact format
+		pr := stats.GetPageRankScore(selectedID)
+		bt := stats.GetBetweennessScore(selectedID)
+		ev := stats.GetEigenvectorScore(selectedID)
+		imp := stats.GetCriticalPathScore(selectedID)
+		hub := stats.GetHubScore(selectedID)
+		auth := stats.GetAuthorityScore(selectedID)
+
+		sb.WriteString(fmt.Sprintf("- **Impact Depth:** `%.0f` _(downstream chain length)_\n", imp))
+		sb.WriteString(fmt.Sprintf("- **Centrality:** PR `%.4f` • BW `%.4f` • EV `%.4f`\n", pr, bt, ev))
+		sb.WriteString(fmt.Sprintf("- **Flow Role:** Hub `%.4f` • Auth `%.4f`\n", hub, auth))
+		sb.WriteString(fmt.Sprintf("- **Degree:** In `%d` ← → Out `%d`\n\n", stats.InDegree[selectedID], stats.OutDegree[selectedID]))
+	}
+
+	// === Description ===
+	if issue.Description != "" {
+		sb.WriteString("### Description\n\n")
+		sb.WriteString(issue.Description + "\n\n")
+	}
+
+	// === Design ===
+	if issue.Design != "" {
+		sb.WriteString("### Design\n\n")
+		sb.WriteString(issue.Design + "\n\n")
+	}
+
+	// === Acceptance Criteria ===
+	if issue.AcceptanceCriteria != "" {
+		sb.WriteString("### Acceptance Criteria\n\n")
+		sb.WriteString(issue.AcceptanceCriteria + "\n\n")
+	}
+
+	// === Notes ===
+	if issue.Notes != "" {
+		sb.WriteString("### Notes\n\n")
+		sb.WriteString("> " + strings.ReplaceAll(issue.Notes, "\n", "\n> ") + "\n\n")
+	}
+
+	// === Dependencies ===
+	if len(issue.Dependencies) > 0 {
+		sb.WriteString(fmt.Sprintf("### Dependencies (%d)\n\n", len(issue.Dependencies)))
+		for _, dep := range issue.Dependencies {
+			depIssue := m.issueMap[dep.DependsOnID]
+			if depIssue != nil {
+				sb.WriteString(fmt.Sprintf("- **%s:** %s\n", dep.Type, depIssue.Title))
+			} else {
+				sb.WriteString(fmt.Sprintf("- **%s:** `%s`\n", dep.Type, dep.DependsOnID))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	// === Calculation Proof Section ===
+	if m.showCalculation && m.insights.Stats != nil {
+		sb.WriteString(m.renderCalculationProofMD(selectedID))
+	}
+
+	return sb.String()
+}
+
+// renderCalculationProofMD generates markdown for calculation proof
+func (m *InsightsModel) renderCalculationProofMD(selectedID string) string {
+	var sb strings.Builder
+	stats := m.insights.Stats
+	info := metricDescriptions[m.focusedPanel]
+
+	sb.WriteString("---\n\n")
+	sb.WriteString("### 🔬 Calculation Proof\n\n")
+	sb.WriteString(fmt.Sprintf("**Formula:** %s\n\n", info.FormulaHint))
+
+	switch m.focusedPanel {
+	case PanelBottlenecks:
+		bw := stats.GetBetweennessScore(selectedID)
+		sb.WriteString(fmt.Sprintf("**Betweenness Score:** `%.4f`\n\n", bw))
+		upstream := m.findDependents(selectedID)
+		downstream := m.findDependencies(selectedID)
+		if len(upstream) > 0 {
+			sb.WriteString(fmt.Sprintf("**Beads depending on this (%d):**\n", len(upstream)))
+			for i, id := range upstream {
+				if i >= 5 {
+					sb.WriteString(fmt.Sprintf("- _...+%d more_\n", len(upstream)-5))
+					break
+				}
+				sb.WriteString(fmt.Sprintf("- ↓ %s\n", m.getBeadTitle(id, 40)))
+			}
+			sb.WriteString("\n")
+		}
+		if len(downstream) > 0 {
+			sb.WriteString(fmt.Sprintf("**This depends on (%d):**\n", len(downstream)))
+			for i, id := range downstream {
+				if i >= 5 {
+					sb.WriteString(fmt.Sprintf("- _...+%d more_\n", len(downstream)-5))
+					break
+				}
+				sb.WriteString(fmt.Sprintf("- ↑ %s\n", m.getBeadTitle(id, 40)))
+			}
+		}
+		sb.WriteString("\n> This bead lies on many shortest paths, making it a *critical junction*.\n\n")
+
+	case PanelKeystones:
+		impact := stats.GetCriticalPathScore(selectedID)
+		sb.WriteString(fmt.Sprintf("**Impact Depth:** `%.0f` levels deep\n\n", impact))
+		chain := m.buildImpactChain(selectedID, int(impact))
+		if len(chain) > 0 {
+			sb.WriteString("**Dependency chain:**\n```\n")
+			for i, id := range chain {
+				indent := strings.Repeat("  ", i)
+				title := m.getBeadTitle(id, 35)
+				sb.WriteString(fmt.Sprintf("%s└─ %s\n", indent, title))
+				if i >= 6 {
+					sb.WriteString(fmt.Sprintf("%s   ... chain continues\n", indent))
+					break
+				}
+			}
+			sb.WriteString("```\n\n")
+		}
+
+	case PanelHubs:
+		hubScore := stats.GetHubScore(selectedID)
+		sb.WriteString(fmt.Sprintf("**Hub Score:** `%.4f`\n\n", hubScore))
+		deps := m.findDependenciesWithScores(selectedID, stats.Authorities())
+		if len(deps) > 0 {
+			sb.WriteString("**Depends on these authorities:**\n")
+			sumAuth := 0.0
+			for _, d := range deps {
+				sumAuth += d.score
+			}
+			for i, d := range deps {
+				if i >= 5 {
+					sb.WriteString(fmt.Sprintf("- _...+%d more_\n", len(deps)-5))
+					break
+				}
+				sb.WriteString(fmt.Sprintf("- → %s (Auth: `%.4f`)\n", m.getBeadTitle(d.id, 30), d.score))
+			}
+			sb.WriteString(fmt.Sprintf("\n> Sum of %d authority scores: `%.4f`\n\n", len(deps), sumAuth))
+		}
+
+	case PanelAuthorities:
+		authScore := stats.GetAuthorityScore(selectedID)
+		sb.WriteString(fmt.Sprintf("**Authority Score:** `%.4f`\n\n", authScore))
+		dependents := m.findDependentsWithScores(selectedID, stats.Hubs())
+		if len(dependents) > 0 {
+			sb.WriteString("**Hubs that depend on this:**\n")
+			sumHub := 0.0
+			for _, d := range dependents {
+				sumHub += d.score
+			}
+			for i, d := range dependents {
+				if i >= 5 {
+					sb.WriteString(fmt.Sprintf("- _...+%d more_\n", len(dependents)-5))
+					break
+				}
+				sb.WriteString(fmt.Sprintf("- ← %s (Hub: `%.4f`)\n", m.getBeadTitle(d.id, 30), d.score))
+			}
+			sb.WriteString(fmt.Sprintf("\n> Sum of %d hub scores: `%.4f`\n\n", len(dependents), sumHub))
+		}
+
+	case PanelCycles:
+		idx := m.selectedIndex[PanelCycles]
+		if idx >= 0 && idx < len(m.insights.Cycles) {
+			cycle := m.insights.Cycles[idx]
+			sb.WriteString(fmt.Sprintf("**Cycle with %d beads:**\n```\n", len(cycle)))
+			for i, id := range cycle {
+				arrow := "→"
+				if i == len(cycle)-1 {
+					arrow = "↺"
+				}
+				sb.WriteString(fmt.Sprintf("%s %s\n", arrow, m.getBeadTitle(id, 35)))
+			}
+			sb.WriteString("```\n\n")
+			sb.WriteString("> These beads form a circular dependency. *Break the cycle* by removing or reversing one edge.\n\n")
+		}
+
+	default:
+		// For other panels, show generic info
+		sb.WriteString(fmt.Sprintf("> %s\n\n", info.HowToUse))
+	}
+
+	return sb.String()
+}
+
 func (m *InsightsModel) renderDetailPanel(width, height int, t Theme) string {
 	panelStyle := t.Renderer.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -1335,6 +1577,22 @@ func (m *InsightsModel) renderDetailPanel(width, height int, t Theme) string {
 
 	selectedID := m.SelectedIssueID()
 	if selectedID == "" {
+		emptyContent := `
+## Select a Bead
+
+Navigate to a metric panel and select an item to view its details here.
+
+**Navigation:**
+- ← → to switch panels
+- ↑ ↓ to select items
+- Enter to view in main view
+`
+		if m.mdRenderer != nil {
+			rendered, err := m.mdRenderer.Render(emptyContent)
+			if err == nil {
+				return panelStyle.Render(rendered)
+			}
+		}
 		emptyStyle := t.Renderer.NewStyle().
 			Foreground(t.Subtext).
 			Italic(true).
@@ -1348,147 +1606,25 @@ func (m *InsightsModel) renderDetailPanel(width, height int, t Theme) string {
 		return panelStyle.Render(t.Renderer.NewStyle().Foreground(t.Subtext).Render("Issue not found: " + selectedID))
 	}
 
-	contentWidth := width - 6
-	var sb strings.Builder
+	// Build markdown content and render with glamour
+	mdContent := m.buildDetailMarkdown(selectedID)
 
-	// === HEADER: Type, Status, Priority ===
-	icon, iconColor := t.GetTypeIcon(string(issue.IssueType))
-	statusColor := t.GetStatusColor(string(issue.Status))
-
-	sb.WriteString(t.Renderer.NewStyle().Foreground(iconColor).Render(icon))
-	sb.WriteString(" ")
-	sb.WriteString(t.Renderer.NewStyle().Bold(true).Render(string(issue.IssueType)))
-	sb.WriteString("  ")
-	sb.WriteString(t.Renderer.NewStyle().Foreground(statusColor).Bold(true).Render(strings.ToUpper(string(issue.Status))))
-	sb.WriteString("  ")
-	sb.WriteString(GetPriorityIcon(issue.Priority))
-	sb.WriteString(fmt.Sprintf(" P%d", issue.Priority))
-	sb.WriteString("\n")
-
-	// === ID (short) ===
-	idStyle := t.Renderer.NewStyle().Foreground(t.Subtext)
-	sb.WriteString(idStyle.Render(truncateRunesHelper(issue.ID, contentWidth, "…")))
-	sb.WriteString("\n\n")
-
-	// === TITLE ===
-	titleHeaderStyle := t.Renderer.NewStyle().Foreground(t.Primary).Bold(true)
-	sb.WriteString(titleHeaderStyle.Render("TITLE"))
-	sb.WriteString("\n")
-	wrappedTitle := wrapText(issue.Title, contentWidth)
-	sb.WriteString(t.Renderer.NewStyle().Bold(true).Render(wrappedTitle))
-	sb.WriteString("\n\n")
-
-	// === DESCRIPTION (full) ===
-	if issue.Description != "" {
-		sb.WriteString(titleHeaderStyle.Render("DESCRIPTION"))
-		sb.WriteString("\n")
-		wrappedDesc := wrapText(issue.Description, contentWidth)
-		sb.WriteString(wrappedDesc)
-		sb.WriteString("\n\n")
-	}
-
-	// === DESIGN (full) ===
-	if issue.Design != "" {
-		sb.WriteString(titleHeaderStyle.Render("DESIGN"))
-		sb.WriteString("\n")
-		wrappedDesign := wrapText(issue.Design, contentWidth)
-		sb.WriteString(wrappedDesign)
-		sb.WriteString("\n\n")
-	}
-
-	// === ACCEPTANCE CRITERIA (full) ===
-	if issue.AcceptanceCriteria != "" {
-		sb.WriteString(titleHeaderStyle.Render("ACCEPTANCE CRITERIA"))
-		sb.WriteString("\n")
-		wrappedAC := wrapText(issue.AcceptanceCriteria, contentWidth)
-		sb.WriteString(wrappedAC)
-		sb.WriteString("\n\n")
-	}
-
-	// === NOTES (full) ===
-	if issue.Notes != "" {
-		sb.WriteString(titleHeaderStyle.Render("NOTES"))
-		sb.WriteString("\n")
-		wrappedNotes := wrapText(issue.Notes, contentWidth)
-		sb.WriteString(t.Renderer.NewStyle().Foreground(t.Subtext).Italic(true).Render(wrappedNotes))
-		sb.WriteString("\n\n")
-	}
-
-	// === ASSIGNEE ===
-	if issue.Assignee != "" {
-		sb.WriteString(t.Renderer.NewStyle().Foreground(t.Secondary).Render("Assignee: "))
-		sb.WriteString("@" + issue.Assignee)
-		sb.WriteString("\n\n")
-	}
-
-	// === DEPENDENCIES ===
-	if len(issue.Dependencies) > 0 {
-		sb.WriteString(titleHeaderStyle.Render(fmt.Sprintf("DEPENDENCIES (%d)", len(issue.Dependencies))))
-		sb.WriteString("\n")
-		for _, dep := range issue.Dependencies {
-			depIssue := m.issueMap[dep.DependsOnID]
-			depTypeStr := string(dep.Type)
-			// Calculate prefix width: "  • " (4) + type + ": " (2)
-			prefixWidth := 6 + len([]rune(depTypeStr))
-			titleWidth := contentWidth - prefixWidth
-			if titleWidth < 10 {
-				titleWidth = 10
+	if m.mdRenderer != nil {
+		rendered, err := m.mdRenderer.Render(mdContent)
+		if err == nil {
+			// Truncate to fit panel height (approximate line count)
+			lines := strings.Split(rendered, "\n")
+			maxLines := height - 2
+			if len(lines) > maxLines {
+				lines = lines[:maxLines]
+				lines = append(lines, t.Renderer.NewStyle().Foreground(t.Subtext).Italic(true).Render("... (scroll for more)"))
 			}
-			if depIssue != nil {
-				depTitle := truncateRunesHelper(depIssue.Title, titleWidth, "…")
-				sb.WriteString(fmt.Sprintf("  • %s: %s\n", depTypeStr, depTitle))
-			} else {
-				sb.WriteString(fmt.Sprintf("  • %s: %s\n", depTypeStr, truncateRunesHelper(dep.DependsOnID, titleWidth, "…")))
-			}
+			return panelStyle.Render(strings.Join(lines, "\n"))
 		}
-		sb.WriteString("\n")
 	}
 
-	// === METRIC VALUES ===
-	if m.insights.Stats != nil {
-		dividerStyle := t.Renderer.NewStyle().Foreground(t.Primary).Bold(true)
-		sb.WriteString(dividerStyle.Render("─── METRICS ───"))
-		sb.WriteString("\n")
-
-		stats := m.insights.Stats
-		metricStyle := t.Renderer.NewStyle().Foreground(t.Secondary)
-		valueStyle := t.Renderer.NewStyle().Foreground(t.Primary).Bold(true)
-
-		metrics := []struct {
-			name  string
-			value float64
-		}{
-			{"PageRank", stats.GetPageRankScore(selectedID)},
-			{"Betweenness", stats.GetBetweennessScore(selectedID)},
-			{"Eigenvector", stats.GetEigenvectorScore(selectedID)},
-			{"Impact", stats.GetCriticalPathScore(selectedID)},
-			{"Hub", stats.GetHubScore(selectedID)},
-			{"Authority", stats.GetAuthorityScore(selectedID)},
-		}
-
-		for _, metric := range metrics {
-			sb.WriteString(metricStyle.Render(fmt.Sprintf("%-11s", metric.name+":")))
-			sb.WriteString(valueStyle.Render(formatMetricValue(metric.value)))
-			sb.WriteString(" ")
-		}
-		sb.WriteString("\n")
-
-		// Degree info on one line
-		sb.WriteString(metricStyle.Render("In: "))
-		sb.WriteString(valueStyle.Render(fmt.Sprintf("%d", stats.InDegree[selectedID])))
-		sb.WriteString(t.Renderer.NewStyle().Foreground(t.Subtext).Render(" ← "))
-		sb.WriteString(metricStyle.Render("Out: "))
-		sb.WriteString(valueStyle.Render(fmt.Sprintf("%d", stats.OutDegree[selectedID])))
-		sb.WriteString(t.Renderer.NewStyle().Foreground(t.Subtext).Render(" →"))
-		sb.WriteString("\n\n")
-	}
-
-	// === CALCULATION PROOF ===
-	if m.showCalculation && m.insights.Stats != nil {
-		sb.WriteString(m.renderCalculationProof(selectedID, contentWidth, t))
-	}
-
-	return panelStyle.Render(sb.String())
+	// Fallback to raw markdown if renderer fails
+	return panelStyle.Render(wrapText(mdContent, width-4))
 }
 
 // formatMetricValue formats a metric value nicely
@@ -1503,207 +1639,6 @@ func formatMetricValue(v float64) string {
 		return fmt.Sprintf("%.2e", v)
 	}
 	return "0"
-}
-
-// renderCalculationProof shows the actual beads and numbers that contributed to the metric
-func (m *InsightsModel) renderCalculationProof(selectedID string, width int, t Theme) string {
-	var sb strings.Builder
-	stats := m.insights.Stats
-	info := metricDescriptions[m.focusedPanel]
-
-	dividerStyle := t.Renderer.NewStyle().Foreground(t.Primary).Bold(true)
-	sb.WriteString(dividerStyle.Render("─── CALCULATION PROOF ───"))
-	sb.WriteString("\n")
-
-	// Formula hint
-	formulaStyle := t.Renderer.NewStyle().Foreground(t.Secondary).Italic(true)
-	sb.WriteString(formulaStyle.Render(info.FormulaHint))
-	sb.WriteString("\n\n")
-
-	labelStyle := t.Renderer.NewStyle().Foreground(t.Secondary)
-	valueStyle := t.Renderer.NewStyle().Foreground(t.Primary).Bold(true)
-	itemStyle := t.Renderer.NewStyle() // Default text color
-	subStyle := t.Renderer.NewStyle().Foreground(t.Subtext)
-
-	switch m.focusedPanel {
-	case PanelBottlenecks:
-		// Betweenness: Show shortest path involvement
-		bw := stats.GetBetweennessScore(selectedID)
-		sb.WriteString(labelStyle.Render("Betweenness Score: "))
-		sb.WriteString(valueStyle.Render(formatMetricValue(bw)))
-		sb.WriteString("\n\n")
-
-		// Find beads that depend on this one (upstream) and beads this depends on (downstream)
-		upstream := m.findDependents(selectedID)
-		downstream := m.findDependencies(selectedID)
-
-		if len(upstream) > 0 {
-			sb.WriteString(labelStyle.Render(fmt.Sprintf("Beads depending on this (%d):\n", len(upstream))))
-			for i, id := range upstream {
-				if i >= 5 {
-					sb.WriteString(subStyle.Render(fmt.Sprintf("  ... +%d more\n", len(upstream)-5)))
-					break
-				}
-				title := m.getBeadTitle(id, width-4)
-				sb.WriteString(itemStyle.Render(fmt.Sprintf("  ↓ %s\n", title)))
-			}
-		}
-
-		if len(downstream) > 0 {
-			sb.WriteString(labelStyle.Render(fmt.Sprintf("This depends on (%d):\n", len(downstream))))
-			for i, id := range downstream {
-				if i >= 5 {
-					sb.WriteString(subStyle.Render(fmt.Sprintf("  ... +%d more\n", len(downstream)-5)))
-					break
-				}
-				title := m.getBeadTitle(id, width-4)
-				sb.WriteString(itemStyle.Render(fmt.Sprintf("  ↑ %s\n", title)))
-			}
-		}
-
-		sb.WriteString("\n")
-		sb.WriteString(subStyle.Render(wrapText("This bead lies on many shortest paths between other beads, making it a critical junction in the dependency graph.", width)))
-
-	case PanelKeystones:
-		// Impact Depth: Show the dependency chain
-		impact := stats.GetCriticalPathScore(selectedID)
-		sb.WriteString(labelStyle.Render("Impact Depth: "))
-		sb.WriteString(valueStyle.Render(formatMetricValue(impact)))
-		sb.WriteString(labelStyle.Render(" levels deep"))
-		sb.WriteString("\n\n")
-
-		// Show the chain of dependents
-		chain := m.buildImpactChain(selectedID, int(impact))
-		if len(chain) > 0 {
-			sb.WriteString(labelStyle.Render("Dependency chain:\n"))
-			for i, id := range chain {
-				indent := strings.Repeat("  ", i)
-				// Account for indent (2*i chars) + "└─ " (3 chars)
-				titleWidth := width - (2*i + 3)
-				if titleWidth < 10 {
-					titleWidth = 10
-				}
-				title := m.getBeadTitle(id, titleWidth)
-				if i == 0 {
-					sb.WriteString(valueStyle.Render(fmt.Sprintf("%s└─ %s\n", indent, title)))
-				} else {
-					sb.WriteString(itemStyle.Render(fmt.Sprintf("%s└─ %s\n", indent, title)))
-				}
-				if i >= 6 {
-					sb.WriteString(subStyle.Render(fmt.Sprintf("%s   ... chain continues\n", indent)))
-					break
-				}
-			}
-		}
-
-	case PanelInfluencers:
-		// Eigenvector: Show influential neighbors
-		ev := stats.GetEigenvectorScore(selectedID)
-		sb.WriteString(labelStyle.Render("Eigenvector Centrality: "))
-		sb.WriteString(valueStyle.Render(formatMetricValue(ev)))
-		sb.WriteString("\n\n")
-
-		// Find neighbors and their eigenvector scores
-		neighbors := m.findNeighborsWithScores(selectedID, stats.Eigenvector())
-		if len(neighbors) > 0 {
-			sb.WriteString(labelStyle.Render("Connected to influential beads:\n"))
-			for i, n := range neighbors {
-				if i >= 5 {
-					sb.WriteString(subStyle.Render(fmt.Sprintf("  ... +%d more connections\n", len(neighbors)-5)))
-					break
-				}
-				title := m.getBeadTitle(n.id, width-15)
-				sb.WriteString(itemStyle.Render(fmt.Sprintf("  • %s ", title)))
-				sb.WriteString(subStyle.Render(fmt.Sprintf("(EV: %s)\n", formatMetricValue(n.score))))
-			}
-		}
-
-		sb.WriteString("\n")
-		sb.WriteString(subStyle.Render(wrapText("Score reflects connections to other well-connected beads.", width)))
-
-	case PanelHubs:
-		// Hubs: Show authorities this hub depends on
-		hubScore := stats.GetHubScore(selectedID)
-		sb.WriteString(labelStyle.Render("Hub Score: "))
-		sb.WriteString(valueStyle.Render(formatMetricValue(hubScore)))
-		sb.WriteString("\n\n")
-
-		// Find authorities (dependencies) with their authority scores
-		deps := m.findDependenciesWithScores(selectedID, stats.Authorities())
-		if len(deps) > 0 {
-			sb.WriteString(labelStyle.Render("Depends on these authorities:\n"))
-			// Calculate total sum over all items
-			sumAuth := 0.0
-			for _, d := range deps {
-				sumAuth += d.score
-			}
-			// Display up to 5 items
-			for i, d := range deps {
-				if i >= 5 {
-					sb.WriteString(subStyle.Render(fmt.Sprintf("  ... +%d more\n", len(deps)-5)))
-					break
-				}
-				title := m.getBeadTitle(d.id, width-15)
-				sb.WriteString(itemStyle.Render(fmt.Sprintf("  → %s ", title)))
-				sb.WriteString(subStyle.Render(fmt.Sprintf("(Auth: %s)\n", formatMetricValue(d.score))))
-			}
-			sb.WriteString("\n")
-			sb.WriteString(subStyle.Render(fmt.Sprintf("Sum of %d authority scores: %s", len(deps), formatMetricValue(sumAuth))))
-		}
-
-	case PanelAuthorities:
-		// Authorities: Show hubs that depend on this authority
-		authScore := stats.GetAuthorityScore(selectedID)
-		sb.WriteString(labelStyle.Render("Authority Score: "))
-		sb.WriteString(valueStyle.Render(formatMetricValue(authScore)))
-		sb.WriteString("\n\n")
-
-		// Find hubs (dependents) with their hub scores
-		dependents := m.findDependentsWithScores(selectedID, stats.Hubs())
-		if len(dependents) > 0 {
-			sb.WriteString(labelStyle.Render("Hubs that depend on this:\n"))
-			// Calculate total sum over all items
-			sumHub := 0.0
-			for _, d := range dependents {
-				sumHub += d.score
-			}
-			// Display up to 5 items
-			for i, d := range dependents {
-				if i >= 5 {
-					sb.WriteString(subStyle.Render(fmt.Sprintf("  ... +%d more\n", len(dependents)-5)))
-					break
-				}
-				title := m.getBeadTitle(d.id, width-15)
-				sb.WriteString(itemStyle.Render(fmt.Sprintf("  ← %s ", title)))
-				sb.WriteString(subStyle.Render(fmt.Sprintf("(Hub: %s)\n", formatMetricValue(d.score))))
-			}
-			sb.WriteString("\n")
-			sb.WriteString(subStyle.Render(fmt.Sprintf("Sum of %d hub scores: %s", len(dependents), formatMetricValue(sumHub))))
-		}
-
-	case PanelCycles:
-		// Cycles: Show the cycle members
-		idx := m.selectedIndex[PanelCycles]
-		if idx >= 0 && idx < len(m.insights.Cycles) {
-			cycle := m.insights.Cycles[idx]
-			sb.WriteString(labelStyle.Render(fmt.Sprintf("Cycle with %d beads:\n", len(cycle))))
-			for i, id := range cycle {
-				title := m.getBeadTitle(id, width-6)
-				arrow := "→"
-				if i == len(cycle)-1 {
-					arrow = "↺" // loops back
-				}
-				sb.WriteString(itemStyle.Render(fmt.Sprintf("  %s %s\n", arrow, title)))
-			}
-			sb.WriteString("\n")
-			sb.WriteString(subStyle.Render(wrapText("These beads form a circular dependency. Break the cycle by removing or reversing one edge.", width)))
-		}
-	}
-
-	sb.WriteString("\n")
-	sb.WriteString(subStyle.Render(wrapText(info.HowToUse, width)))
-
-	return sb.String()
 }
 
 // Helper type for scored items

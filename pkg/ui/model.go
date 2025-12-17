@@ -1558,6 +1558,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					PriorityHints:     m.priorityHints,
 					WorkspaceMode:     m.workspaceMode,
 				})
+				// Show explanatory status message
+				if m.showPriorityHints {
+					count := len(m.priorityHints)
+					if count > 0 {
+						m.statusMsg = fmt.Sprintf("Priority hints: ↑ increase ↓ decrease (%d suggestions)", count)
+					} else {
+						m.statusMsg = "Priority hints: No misalignments detected (analysis ongoing)"
+					}
+				} else {
+					m.statusMsg = ""
+				}
 				return m, nil
 
 			case "h":
