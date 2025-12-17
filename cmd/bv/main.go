@@ -114,6 +114,10 @@ func main() {
 	hotspotsLimit := flag.Int("hotspots-limit", 10, "Max hotspots to show (use with --robot-file-hotspots)")
 	// Impact analysis flag (bv-19pq)
 	robotImpact := flag.String("robot-impact", "", "Analyze impact of modifying files (comma-separated paths)")
+	// Co-change detection flag (bv-7a2f)
+	robotFileRelations := flag.String("robot-file-relations", "", "Output files that frequently co-change with the given file path")
+	relationsThreshold := flag.Float64("relations-threshold", 0.5, "Minimum correlation threshold (0.0-1.0) for related files")
+	relationsLimit := flag.Int("relations-limit", 10, "Max related files to show")
 	// Sprint flags (bv-156)
 	robotSprintList := flag.Bool("robot-sprint-list", false, "Output sprints as JSON")
 	robotSprintShow := flag.String("robot-sprint-show", "", "Output specific sprint details as JSON")
@@ -193,6 +197,7 @@ func main() {
 		*robotFileBeads != "" ||
 		*fileHotspots ||
 		*robotImpact != "" ||
+		*robotFileRelations != "" ||
 		*robotSprintList ||
 		*robotSprintShow != "" ||
 		*robotForecast != "" ||
@@ -336,6 +341,20 @@ func main() {
 		fmt.Println("      Input: Comma-separated file paths")
 		fmt.Println("      Example: bv --robot-impact pkg/auth/token.go")
 		fmt.Println("      Example: bv --robot-impact pkg/auth/token.go,pkg/auth/session.go")
+		fmt.Println("")
+		fmt.Println("  --robot-file-relations <path>")
+		fmt.Println("      Outputs files that frequently co-change with the given file.")
+		fmt.Println("      Reveals hidden coupling: what other files typically change together?")
+		fmt.Println("      Key fields:")
+		fmt.Println("      - total_commits: How many commits touched this file")
+		fmt.Println("      - related_files: Files that co-change, with correlation scores")
+		fmt.Println("        - correlation: 0.0-1.0 (e.g., 0.8 = changed together in 80% of commits)")
+		fmt.Println("        - sample_commits: Example commit SHAs showing co-change")
+		fmt.Println("      Options:")
+		fmt.Println("      - --relations-threshold <0.0-1.0>: Min correlation (default 0.5)")
+		fmt.Println("      - --relations-limit <n>: Max related files to return (default 10)")
+		fmt.Println("      Example: bv --robot-file-relations pkg/auth/token.go")
+		fmt.Println("      Example: bv --robot-file-relations pkg/auth/token.go --relations-threshold 0.3")
 		fmt.Println("")
 		fmt.Println("  --robot-sprint-list")
 		fmt.Println("      Outputs all sprints as JSON for planning and forecasting.")
@@ -2806,6 +2825,84 @@ func main() {
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(output); err != nil {
 			fmt.Fprintf(os.Stderr, "Error encoding impact analysis: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	// Handle --robot-file-relations flag (bv-7a2f)
+	if *robotFileRelations != "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting current directory: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := correlation.ValidateRepository(cwd); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		issues, err := loader.LoadIssues(cwd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading beads: %v\n", err)
+			os.Exit(1)
+		}
+
+		beadsDir, err := loader.GetBeadsDir("")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting beads directory: %v\n", err)
+			os.Exit(1)
+		}
+		beadsPath, err := loader.FindJSONLPath(beadsDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error finding beads file: %v\n", err)
+			os.Exit(1)
+		}
+
+		beadInfos := make([]correlation.BeadInfo, len(issues))
+		for i, issue := range issues {
+			beadInfos[i] = correlation.BeadInfo{
+				ID:     issue.ID,
+				Title:  issue.Title,
+				Status: string(issue.Status),
+			}
+		}
+
+		correlator := correlation.NewCorrelator(cwd, beadsPath)
+		report, err := correlator.GenerateReport(beadInfos, correlation.CorrelatorOptions{
+			Limit: *historyLimit,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error generating history report: %v\n", err)
+			os.Exit(1)
+		}
+
+		fileLookup := correlation.NewFileLookup(report)
+		result := fileLookup.GetRelatedFiles(*robotFileRelations, *relationsThreshold, *relationsLimit)
+
+		type RelationsOutput struct {
+			GeneratedAt  time.Time                   `json:"generated_at"`
+			DataHash     string                      `json:"data_hash"`
+			FilePath     string                      `json:"file_path"`
+			TotalCommits int                         `json:"total_commits"`
+			Threshold    float64                     `json:"threshold"`
+			RelatedFiles []correlation.CoChangeEntry `json:"related_files"`
+		}
+
+		output := RelationsOutput{
+			GeneratedAt:  time.Now(),
+			DataHash:     report.DataHash,
+			FilePath:     result.FilePath,
+			TotalCommits: result.TotalCommits,
+			Threshold:    result.Threshold,
+			RelatedFiles: result.RelatedFiles,
+		}
+
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(output); err != nil {
+			fmt.Fprintf(os.Stderr, "Error encoding file relations: %v\n", err)
 			os.Exit(1)
 		}
 		os.Exit(0)

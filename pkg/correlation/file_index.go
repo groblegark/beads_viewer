@@ -45,8 +45,9 @@ type FileBeadLookupResult struct {
 
 // FileLookup provides file-to-bead lookup functionality.
 type FileLookup struct {
-	index *FileBeadIndex
-	beads map[string]BeadHistory // BeadID -> history for status lookups
+	index    *FileBeadIndex
+	beads    map[string]BeadHistory // BeadID -> history for status lookups
+	coChange *CoChangeMatrix        // Co-change matrix for related files
 }
 
 // BuildFileIndex creates a file index from a history report.
@@ -145,13 +146,15 @@ func BuildFileIndex(report *HistoryReport) *FileBeadIndex {
 func NewFileLookup(report *HistoryReport) *FileLookup {
 	if report == nil {
 		return &FileLookup{
-			index: BuildFileIndex(nil),
-			beads: make(map[string]BeadHistory),
+			index:    BuildFileIndex(nil),
+			beads:    make(map[string]BeadHistory),
+			coChange: BuildCoChangeMatrix(nil),
 		}
 	}
 	return &FileLookup{
-		index: BuildFileIndex(report),
-		beads: report.Histories,
+		index:    BuildFileIndex(report),
+		beads:    report.Histories,
+		coChange: BuildCoChangeMatrix(report),
 	}
 }
 
@@ -272,6 +275,18 @@ func (fl *FileLookup) GetStats() FileIndexStats {
 	return fl.index.Stats
 }
 
+// GetRelatedFiles returns files that frequently co-change with the given file.
+// threshold is the minimum correlation (0.0-1.0) to include (default 0.5 if <= 0).
+// limit is the maximum number of related files to return (default 10 if <= 0).
+func (fl *FileLookup) GetRelatedFiles(filePath string, threshold float64, limit int) *CoChangeResult {
+	return fl.coChange.GetRelatedFiles(filePath, threshold, limit)
+}
+
+// GetCoChangeMatrix returns the underlying co-change matrix for advanced queries.
+func (fl *FileLookup) GetCoChangeMatrix() *CoChangeMatrix {
+	return fl.coChange
+}
+
 // GetHotspots returns files touched by the most beads (potential conflict zones).
 func (fl *FileLookup) GetHotspots(limit int) []FileHotspot {
 	type fileBeadCount struct {
@@ -333,6 +348,174 @@ type FileHotspot struct {
 	TotalBeads  int    `json:"total_beads"`
 	OpenBeads   int    `json:"open_beads"`
 	ClosedBeads int    `json:"closed_beads"`
+}
+
+// CoChangeEntry represents a file that frequently co-changes with another file.
+type CoChangeEntry struct {
+	FilePath       string  `json:"file_path"`        // The related file
+	CoChangeCount  int     `json:"co_change_count"`  // Number of commits where both files changed
+	TotalCommits   int     `json:"total_commits"`    // Total commits touching the source file
+	Correlation    float64 `json:"correlation"`      // co_change_count / total_commits (0.0 - 1.0)
+	SampleCommits  []string `json:"sample_commits"`  // Up to 3 sample commit SHAs
+}
+
+// CoChangeResult is the result of looking up files that co-change with a given file.
+type CoChangeResult struct {
+	FilePath      string          `json:"file_path"`       // The queried file
+	TotalCommits  int             `json:"total_commits"`   // Total commits touching this file
+	RelatedFiles  []CoChangeEntry `json:"related_files"`   // Files that co-change, sorted by correlation
+	Threshold     float64         `json:"threshold"`       // Minimum correlation threshold used
+}
+
+// CoChangeMatrix stores co-change relationships between files.
+// Key is normalized file path, value is map of related file -> commit count.
+type CoChangeMatrix struct {
+	// Matrix maps file -> related file -> count of commits where both changed
+	Matrix map[string]map[string]int `json:"matrix"`
+	// FileCommitCounts maps file -> total commits touching that file
+	FileCommitCounts map[string]int `json:"file_commit_counts"`
+	// CommitFiles maps commit SHA -> files changed in that commit (for sampling)
+	CommitFiles map[string][]string `json:"-"` // Not serialized, internal use
+}
+
+// BuildCoChangeMatrix creates a co-change matrix from a history report.
+// It analyzes which files frequently change together in the same commits.
+func BuildCoChangeMatrix(report *HistoryReport) *CoChangeMatrix {
+	matrix := &CoChangeMatrix{
+		Matrix:           make(map[string]map[string]int),
+		FileCommitCounts: make(map[string]int),
+		CommitFiles:      make(map[string][]string),
+	}
+
+	if report == nil {
+		return matrix
+	}
+
+	// Track unique commits to avoid counting the same commit multiple times
+	// (a commit may appear in multiple bead histories if it touches multiple beads)
+	processedCommits := make(map[string]bool)
+
+	for _, history := range report.Histories {
+		for _, commit := range history.Commits {
+			if processedCommits[commit.SHA] {
+				continue
+			}
+			processedCommits[commit.SHA] = true
+
+			// Normalize all file paths in this commit
+			var files []string
+			for _, fc := range commit.Files {
+				normalized := normalizePath(fc.Path)
+				if normalized != "" {
+					files = append(files, normalized)
+				}
+			}
+
+			// Store files for this commit (for sampling later)
+			matrix.CommitFiles[commit.ShortSHA] = files
+
+			// Update file commit counts
+			for _, file := range files {
+				matrix.FileCommitCounts[file]++
+			}
+
+			// Build co-change relationships (all pairs of files in this commit)
+			for i := 0; i < len(files); i++ {
+				for j := 0; j < len(files); j++ {
+					if i == j {
+						continue // Skip self-relationships
+					}
+					fileA, fileB := files[i], files[j]
+					if matrix.Matrix[fileA] == nil {
+						matrix.Matrix[fileA] = make(map[string]int)
+					}
+					matrix.Matrix[fileA][fileB]++
+				}
+			}
+		}
+	}
+
+	return matrix
+}
+
+// GetRelatedFiles returns files that frequently co-change with the given file.
+// threshold is the minimum correlation (0.0-1.0) to include (default 0.5 if <= 0).
+// limit is the maximum number of related files to return (default 10 if <= 0).
+func (m *CoChangeMatrix) GetRelatedFiles(filePath string, threshold float64, limit int) *CoChangeResult {
+	if threshold <= 0 {
+		threshold = 0.5 // Default: 50% co-occurrence
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+
+	normalizedPath := normalizePath(filePath)
+	result := &CoChangeResult{
+		FilePath:     filePath,
+		TotalCommits: m.FileCommitCounts[normalizedPath],
+		RelatedFiles: []CoChangeEntry{},
+		Threshold:    threshold,
+	}
+
+	if result.TotalCommits == 0 {
+		return result // File not found in history
+	}
+
+	related := m.Matrix[normalizedPath]
+	if related == nil {
+		return result // No co-changes found
+	}
+
+	// Build list of related files with correlation
+	var entries []CoChangeEntry
+	for relatedFile, count := range related {
+		correlation := float64(count) / float64(result.TotalCommits)
+		if correlation >= threshold {
+			entry := CoChangeEntry{
+				FilePath:      relatedFile,
+				CoChangeCount: count,
+				TotalCommits:  result.TotalCommits,
+				Correlation:   correlation,
+				SampleCommits: []string{},
+			}
+
+			// Find sample commits where both files changed together
+			sampleCount := 0
+			for sha, files := range m.CommitFiles {
+				if sampleCount >= 3 {
+					break
+				}
+				hasSource, hasRelated := false, false
+				for _, f := range files {
+					if f == normalizedPath {
+						hasSource = true
+					}
+					if f == relatedFile {
+						hasRelated = true
+					}
+				}
+				if hasSource && hasRelated {
+					entry.SampleCommits = append(entry.SampleCommits, sha)
+					sampleCount++
+				}
+			}
+
+			entries = append(entries, entry)
+		}
+	}
+
+	// Sort by correlation descending
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Correlation > entries[j].Correlation
+	})
+
+	// Apply limit
+	if len(entries) > limit {
+		entries = entries[:limit]
+	}
+
+	result.RelatedFiles = entries
+	return result
 }
 
 // ImpactResult is the result of analyzing what beads might be affected by file changes.

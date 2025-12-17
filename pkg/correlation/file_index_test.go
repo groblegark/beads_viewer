@@ -595,3 +595,198 @@ func TestImpactAnalysisDuplicatesRemoved(t *testing.T) {
 			result.AffectedBeads[0].OverlapFiles)
 	}
 }
+
+// Co-change detection tests
+
+func TestBuildCoChangeMatrix(t *testing.T) {
+	now := time.Now()
+	report := &HistoryReport{
+		Histories: map[string]BeadHistory{
+			"bv-1": {
+				BeadID: "bv-1",
+				Commits: []CorrelatedCommit{
+					{
+						SHA:      "commit1",
+						ShortSHA: "c1",
+						Timestamp: now,
+						Files: []FileChange{
+							{Path: "auth/token.go"},
+							{Path: "auth/session.go"},
+							{Path: "config/auth.yaml"},
+						},
+					},
+					{
+						SHA:      "commit2",
+						ShortSHA: "c2",
+						Timestamp: now.Add(-24 * time.Hour),
+						Files: []FileChange{
+							{Path: "auth/token.go"},
+							{Path: "auth/session.go"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	matrix := BuildCoChangeMatrix(report)
+
+	// token.go should have 2 commits
+	if matrix.FileCommitCounts["auth/token.go"] != 2 {
+		t.Errorf("Expected 2 commits for token.go, got %d", matrix.FileCommitCounts["auth/token.go"])
+	}
+
+	// session.go should also have 2 commits
+	if matrix.FileCommitCounts["auth/session.go"] != 2 {
+		t.Errorf("Expected 2 commits for session.go, got %d", matrix.FileCommitCounts["auth/session.go"])
+	}
+
+	// config/auth.yaml should have 1 commit
+	if matrix.FileCommitCounts["config/auth.yaml"] != 1 {
+		t.Errorf("Expected 1 commit for auth.yaml, got %d", matrix.FileCommitCounts["config/auth.yaml"])
+	}
+
+	// token.go -> session.go should be 2 (they changed together twice)
+	if matrix.Matrix["auth/token.go"]["auth/session.go"] != 2 {
+		t.Errorf("Expected 2 co-changes between token.go and session.go, got %d",
+			matrix.Matrix["auth/token.go"]["auth/session.go"])
+	}
+
+	// token.go -> auth.yaml should be 1 (only in commit1)
+	if matrix.Matrix["auth/token.go"]["config/auth.yaml"] != 1 {
+		t.Errorf("Expected 1 co-change between token.go and auth.yaml, got %d",
+			matrix.Matrix["auth/token.go"]["config/auth.yaml"])
+	}
+}
+
+func TestCoChangeMatrixNil(t *testing.T) {
+	matrix := BuildCoChangeMatrix(nil)
+
+	if len(matrix.Matrix) != 0 {
+		t.Error("Expected empty matrix for nil report")
+	}
+
+	if len(matrix.FileCommitCounts) != 0 {
+		t.Error("Expected empty file commit counts for nil report")
+	}
+}
+
+func TestGetRelatedFiles(t *testing.T) {
+	now := time.Now()
+	report := &HistoryReport{
+		Histories: map[string]BeadHistory{
+			"bv-1": {
+				BeadID: "bv-1",
+				Commits: []CorrelatedCommit{
+					{SHA: "a", ShortSHA: "a", Timestamp: now, Files: []FileChange{
+						{Path: "auth/token.go"}, {Path: "auth/session.go"}, {Path: "config/auth.yaml"},
+					}},
+					{SHA: "b", ShortSHA: "b", Timestamp: now, Files: []FileChange{
+						{Path: "auth/token.go"}, {Path: "auth/session.go"},
+					}},
+					{SHA: "c", ShortSHA: "c", Timestamp: now, Files: []FileChange{
+						{Path: "auth/token.go"}, {Path: "auth/session.go"},
+					}},
+					{SHA: "d", ShortSHA: "d", Timestamp: now, Files: []FileChange{
+						{Path: "auth/token.go"}, {Path: "auth/session.go"},
+					}},
+					{SHA: "e", ShortSHA: "e", Timestamp: now, Files: []FileChange{
+						{Path: "auth/token.go"}, // Only token.go
+					}},
+				},
+			},
+		},
+	}
+
+	lookup := NewFileLookup(report)
+	result := lookup.GetRelatedFiles("auth/token.go", 0.5, 10)
+
+	// token.go has 5 commits
+	if result.TotalCommits != 5 {
+		t.Errorf("Expected 5 total commits, got %d", result.TotalCommits)
+	}
+
+	// session.go should be related (4/5 = 0.8 correlation)
+	foundSession := false
+	for _, entry := range result.RelatedFiles {
+		if entry.FilePath == "auth/session.go" {
+			foundSession = true
+			if entry.CoChangeCount != 4 {
+				t.Errorf("Expected 4 co-changes for session.go, got %d", entry.CoChangeCount)
+			}
+			// 4/5 = 0.8
+			if entry.Correlation < 0.79 || entry.Correlation > 0.81 {
+				t.Errorf("Expected ~0.8 correlation, got %f", entry.Correlation)
+			}
+		}
+	}
+	if !foundSession {
+		t.Error("Expected session.go in related files")
+	}
+
+	// config/auth.yaml should NOT be in results with 0.5 threshold (1/5 = 0.2 < 0.5)
+	for _, entry := range result.RelatedFiles {
+		if entry.FilePath == "config/auth.yaml" {
+			t.Error("config/auth.yaml should not appear with 0.5 threshold (correlation is 0.2)")
+		}
+	}
+}
+
+func TestGetRelatedFilesWithLowThreshold(t *testing.T) {
+	now := time.Now()
+	report := &HistoryReport{
+		Histories: map[string]BeadHistory{
+			"bv-1": {
+				BeadID: "bv-1",
+				Commits: []CorrelatedCommit{
+					{SHA: "a", ShortSHA: "a", Timestamp: now, Files: []FileChange{
+						{Path: "auth/token.go"}, {Path: "config/auth.yaml"},
+					}},
+					{SHA: "b", ShortSHA: "b", Timestamp: now, Files: []FileChange{
+						{Path: "auth/token.go"},
+					}},
+					{SHA: "c", ShortSHA: "c", Timestamp: now, Files: []FileChange{
+						{Path: "auth/token.go"},
+					}},
+				},
+			},
+		},
+	}
+
+	lookup := NewFileLookup(report)
+
+	// With 0.5 threshold, auth.yaml shouldn't appear (1/3 = 0.33)
+	result := lookup.GetRelatedFiles("auth/token.go", 0.5, 10)
+	if len(result.RelatedFiles) != 0 {
+		t.Errorf("Expected no related files with 0.5 threshold, got %d", len(result.RelatedFiles))
+	}
+
+	// With 0.3 threshold, auth.yaml should appear
+	result = lookup.GetRelatedFiles("auth/token.go", 0.3, 10)
+	if len(result.RelatedFiles) != 1 {
+		t.Errorf("Expected 1 related file with 0.3 threshold, got %d", len(result.RelatedFiles))
+	}
+}
+
+func TestGetRelatedFilesLimit(t *testing.T) {
+	now := time.Now()
+	report := &HistoryReport{
+		Histories: map[string]BeadHistory{
+			"bv-1": {
+				BeadID: "bv-1",
+				Commits: []CorrelatedCommit{
+					{SHA: "a", ShortSHA: "a", Timestamp: now, Files: []FileChange{
+						{Path: "main.go"}, {Path: "a.go"}, {Path: "b.go"}, {Path: "c.go"}, {Path: "d.go"},
+					}},
+				},
+			},
+		},
+	}
+
+	lookup := NewFileLookup(report)
+	result := lookup.GetRelatedFiles("main.go", 0.5, 2) // Limit to 2
+
+	if len(result.RelatedFiles) > 2 {
+		t.Errorf("Expected at most 2 related files due to limit, got %d", len(result.RelatedFiles))
+	}
+}
