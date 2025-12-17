@@ -22,3 +22,6 @@ beads_report_beads_viewer_*.md
 # Rust/WASM build artifacts
 bv-graph-wasm/target/
 bv-graph-wasm/pkg/
+node_modules/
+beads_viewer_graph*.html
+test-results/
