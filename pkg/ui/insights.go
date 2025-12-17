@@ -1009,28 +1009,6 @@ func (m *InsightsModel) renderMiniBar(label string, value float64, width int, t 
 	return labelStyle.Render(prefix) + filledStyle.Render(filledBar) + emptyStyle.Render(emptyBar)
 }
 
-// formatDueIn formats remaining time until due date (bv-93)
-func formatDueIn(due *time.Time) string {
-	if due == nil || due.IsZero() {
-		return ""
-	}
-	remaining := time.Until(*due)
-	if remaining < 0 {
-		return "⚠️OVER"
-	}
-	days := int(remaining.Hours() / 24)
-	if days > 7 {
-		return fmt.Sprintf("%dw", days/7)
-	}
-	if days > 0 {
-		return fmt.Sprintf("%dd", days)
-	}
-	hours := int(remaining.Hours())
-	if hours > 0 {
-		return fmt.Sprintf("%dh", hours)
-	}
-	return "<1h"
-}
 
 // renderPriorityItem renders a single priority recommendation item
 func (m *InsightsModel) renderPriorityItem(pick analysis.TopPick, width, height int, isSelected bool, t Theme) string {
@@ -1224,7 +1202,7 @@ func (m *InsightsModel) renderHeatmapPanel(width, height int, t Theme) string {
 
 		// Track urgency from due date if available
 		if issue := m.issueMap[pick.ID]; issue != nil && issue.DueDate != nil {
-			daysUntilDue := issue.DueDate.Sub(time.Now()).Hours() / 24
+			daysUntilDue := time.Until(*issue.DueDate).Hours() / 24
 			urgencyGrid[depthBucket][scoreBucket] += daysUntilDue
 			urgencyCount[depthBucket][scoreBucket]++
 		}

@@ -154,7 +154,7 @@ func TestRobotOutputsShareDataHashAndStatus(t *testing.T) {
 		if payload.DataHash == "" {
 			t.Fatalf("%s missing data_hash", flag)
 		}
-		if payload.Status == nil || len(payload.Status) == 0 {
+		if len(payload.Status) == 0 {
 			t.Fatalf("%s missing status map", flag)
 		}
 		hashes = append(hashes, payload.DataHash)

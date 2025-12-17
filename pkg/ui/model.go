@@ -193,7 +193,6 @@ type Model struct {
 	showLabelGraphAnalysis   bool
 	labelGraphAnalysisResult *LabelGraphAnalysisResult
 	showAttentionView        bool
-	showVelocityComparison   bool // bv-125
 	showShortcutsSidebar     bool // bv-3qi5 toggleable shortcuts sidebar
 	labelHealthCached        bool
 	labelHealthCache         analysis.LabelAnalysisResult
@@ -211,7 +210,6 @@ type Model struct {
 
 	// Filter state
 	currentFilter         string
-	searchTerm            string
 	semanticSearchEnabled bool
 	semanticIndexBuilding bool
 	semanticSearch        *SemanticSearch
@@ -513,8 +511,8 @@ func NewModel(issues []model.Issue, activeRecipe *recipe.Recipe, beadsPath strin
 	board := NewBoardModel(issues, theme)
 	labelDashboard := NewLabelDashboardModel(theme)
 	velocityComparison := NewVelocityComparisonModel(theme) // bv-125
-	shortcutsSidebar := NewShortcutsSidebar(theme)         // bv-3qi5
-	ins := graphStats.GenerateInsights(len(issues))        // allow UI to show as many as fit
+	shortcutsSidebar := NewShortcutsSidebar(theme)          // bv-3qi5
+	ins := graphStats.GenerateInsights(len(issues))         // allow UI to show as many as fit
 	insightsPanel := NewInsightsModel(ins, issueMap, theme)
 	graphView := NewGraphModel(issues, &ins, theme)
 
@@ -1696,7 +1694,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case focusDetail:
-				m.viewport.LineUp(3)
+				m.viewport.ScrollUp(3)
 			case focusInsights:
 				m.insightsPanel.MoveUp()
 			case focusBoard:
@@ -1721,7 +1719,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case focusDetail:
-				m.viewport.LineDown(3)
+				m.viewport.ScrollDown(3)
 			case focusInsights:
 				m.insightsPanel.MoveDown()
 			case focusBoard:
