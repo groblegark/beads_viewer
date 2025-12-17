@@ -59,6 +59,7 @@ const (
 	focusLabelPicker
 	focusSprint      // Sprint dashboard view (bv-161)
 	focusAgentPrompt // AGENTS.md integration prompt (bv-i8dk)
+	focusFlowMatrix  // Cross-label flow matrix view
 )
 
 // SortMode represents the current list sorting mode (bv-3ita)
@@ -251,6 +252,7 @@ type Model struct {
 	shortcutsSidebar   ShortcutsSidebar        // bv-3qi5
 	graphView          GraphModel
 	insightsPanel      InsightsModel
+	flowMatrix         FlowMatrixModel // Cross-label flow matrix
 	theme              Theme
 
 	// Update State
@@ -287,7 +289,6 @@ type Model struct {
 	labelHealthCache         analysis.LabelAnalysisResult
 	attentionCached          bool
 	attentionCache           analysis.LabelAttentionResult
-	flowMatrixText           string
 
 	// Actionable view
 	actionableView ActionableModel
@@ -1040,7 +1041,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cacheHit := cachedAnalyzer.WasCacheHit()
 		m.labelHealthCached = false
 		m.attentionCached = false
-		m.flowMatrixText = ""
 
 		// Rebuild lookup map
 		m.issueMap = make(map[string]*model.Issue, len(newIssues))
@@ -1512,6 +1512,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.focused = focusList
 					return m, nil
 				}
+				if m.focused == focusFlowMatrix {
+					if m.flowMatrix.showDrilldown {
+						m.flowMatrix.showDrilldown = false
+						return m, nil
+					}
+					m.focused = focusList
+					return m, nil
+				}
 				if m.isGraphView {
 					m.isGraphView = false
 					m.focused = focusList
@@ -1531,6 +1539,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				if m.focused == focusInsights {
+					m.focused = focusList
+					return m, nil
+				}
+				if m.focused == focusFlowMatrix {
+					if m.flowMatrix.showDrilldown {
+						m.flowMatrix.showDrilldown = false
+						return m, nil
+					}
 					m.focused = focusList
 					return m, nil
 				}
@@ -1734,19 +1750,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.clearAttentionOverlay()
 				cfg := analysis.DefaultLabelHealthConfig()
 				flow := analysis.ComputeCrossLabelFlow(m.issues, cfg)
-				m.flowMatrixText = FlowMatrixView(flow, max(60, m.width-4))
 				m.isGraphView = false
 				m.isBoardView = false
 				m.isActionableView = false
-				m.focused = focusInsights
-				m.insightsPanel = NewInsightsModel(analysis.Insights{}, m.issueMap, m.theme)
-				m.insightsPanel.labelFlow = &flow
-				m.insightsPanel.extraText = m.flowMatrixText
+				m.isHistoryView = false
+				m.focused = focusFlowMatrix
+				m.flowMatrix = NewFlowMatrixModel(m.theme)
+				m.flowMatrix.SetData(&flow, m.issues)
 				panelHeight := m.height - 2
 				if panelHeight < 3 {
 					panelHeight = 3
 				}
-				m.insightsPanel.SetSize(m.width, panelHeight)
+				m.flowMatrix.SetSize(m.width, panelHeight)
 				return m, nil
 
 			case "!":
@@ -1879,6 +1894,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case focusSprint:
 				m = m.handleSprintKeys(msg)
 
+			case focusFlowMatrix:
+				m = m.handleFlowMatrixKeys(msg)
+
 			case focusList:
 				m = m.handleListKeys(msg)
 
@@ -1914,6 +1932,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.actionableView.MoveUp()
 			case focusHistory:
 				m.historyView.MoveUp()
+			case focusFlowMatrix:
+				m.flowMatrix.MoveUp()
 			}
 			return m, nil
 		case tea.MouseButtonWheelDown:
@@ -1939,6 +1959,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.actionableView.MoveDown()
 			case focusHistory:
 				m.historyView.MoveDown()
+			case focusFlowMatrix:
+				m.flowMatrix.MoveDown()
 			}
 			return m, nil
 		}
@@ -2217,6 +2239,54 @@ func (m Model) handleHistoryKeys(msg tea.KeyMsg) Model {
 		// Exit history view
 		m.isHistoryView = false
 		m.focused = focusList
+	}
+	return m
+}
+
+// handleFlowMatrixKeys handles keyboard input when flow matrix view is focused
+func (m Model) handleFlowMatrixKeys(msg tea.KeyMsg) Model {
+	switch msg.String() {
+	case "f", "q", "esc":
+		// If in drilldown mode, close drilldown first
+		if m.flowMatrix.showDrilldown {
+			m.flowMatrix.showDrilldown = false
+			return m
+		}
+		// Close flow matrix view
+		m.focused = focusList
+	case "j", "down":
+		m.flowMatrix.MoveDown()
+	case "k", "up":
+		m.flowMatrix.MoveUp()
+	case "tab":
+		m.flowMatrix.TogglePanel()
+	case "enter":
+		// Open drilldown or jump to issue
+		if m.flowMatrix.showDrilldown {
+			// Jump to selected issue from drilldown
+			if selectedIssue := m.flowMatrix.SelectedDrilldownIssue(); selectedIssue != nil {
+				for i, item := range m.list.Items() {
+					if issueItem, ok := item.(IssueItem); ok && issueItem.Issue.ID == selectedIssue.ID {
+						m.list.Select(i)
+						break
+					}
+				}
+				m.focused = focusList
+				if m.isSplitView {
+					m.focused = focusDetail
+				} else {
+					m.showDetails = true
+				}
+				m.updateViewportContent()
+			}
+		} else {
+			// Open drilldown for selected label
+			m.flowMatrix.OpenDrilldown()
+		}
+	case "G", "end":
+		m.flowMatrix.GoToEnd()
+	case "g", "home":
+		m.flowMatrix.GoToStart()
 	}
 	return m
 }
@@ -2541,6 +2611,9 @@ func (m Model) View() string {
 		body = m.renderHelpOverlay()
 	} else if m.focused == focusInsights {
 		body = m.insightsPanel.View()
+	} else if m.focused == focusFlowMatrix {
+		m.flowMatrix.SetSize(m.width, m.height-1)
+		body = m.flowMatrix.View()
 	} else if m.isGraphView {
 		body = m.graphView.View(m.width, m.height-1)
 	} else if m.isBoardView {
@@ -3701,6 +3774,8 @@ func (m *Model) renderFooter() string {
 	} else if m.focused == focusInsights {
 		keyHints = append(keyHints, keyStyle.Render("h/l")+" panels", keyStyle.Render("e")+" explain", keyStyle.Render("⏎")+" jump", keyStyle.Render("?")+" help")
 		keyHints = append(keyHints, keyStyle.Render("A")+" attention", keyStyle.Render("F")+" flow")
+	} else if m.focused == focusFlowMatrix {
+		keyHints = append(keyHints, keyStyle.Render("j/k")+" nav", keyStyle.Render("tab")+" panel", keyStyle.Render("⏎")+" drill", keyStyle.Render("esc")+" back", keyStyle.Render("f")+" close")
 	} else if m.isGraphView {
 		keyHints = append(keyHints, keyStyle.Render("hjkl")+" nav", keyStyle.Render("H/L")+" scroll", keyStyle.Render("⏎")+" view", keyStyle.Render("g")+" list")
 	} else if m.isBoardView {
