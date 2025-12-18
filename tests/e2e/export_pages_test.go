@@ -694,9 +694,10 @@ func createRepoWithDeps(t *testing.T) string {
 	}
 
 	// Create a dependency chain: A <- B <- C (C blocked by B, B blocked by A)
+	// NOTE: dependencies use "depends_on_id" field (not "target_id")
 	jsonl := `{"id": "root-a", "title": "Root Task A", "status": "open", "priority": 0, "issue_type": "task"}
-{"id": "child-b", "title": "Child Task B", "status": "blocked", "priority": 1, "issue_type": "task", "dependencies": [{"target_id": "root-a", "type": "blocks"}]}
-{"id": "leaf-c", "title": "Leaf Task C", "status": "blocked", "priority": 2, "issue_type": "task", "dependencies": [{"target_id": "child-b", "type": "blocks"}]}
+{"id": "child-b", "title": "Child Task B", "status": "blocked", "priority": 1, "issue_type": "task", "dependencies": [{"depends_on_id": "root-a", "type": "blocks"}]}
+{"id": "leaf-c", "title": "Leaf Task C", "status": "blocked", "priority": 2, "issue_type": "task", "dependencies": [{"depends_on_id": "child-b", "type": "blocks"}]}
 {"id": "independent-d", "title": "Independent Task D", "status": "open", "priority": 1, "issue_type": "bug"}`
 
 	if err := os.WriteFile(filepath.Join(beadsPath, "beads.jsonl"), []byte(jsonl), 0o644); err != nil {
@@ -1141,4 +1142,296 @@ func searchFTS(t *testing.T, dbPath, query string) []string {
 // Uses the same driver as the export code (modernc.org/sqlite).
 func openSQLiteDB(dbPath string) (*sql.DB, error) {
 	return sql.Open("sqlite", dbPath)
+}
+
+// =============================================================================
+// DETAIL PANE AND GRAPH LAYOUT TESTS (bv-mhfz)
+// =============================================================================
+
+// TestExportPages_DetailPaneMarkup verifies detail pane markup exists in index.html
+func TestExportPages_DetailPaneMarkup(t *testing.T) {
+	bv := buildBvBinary(t)
+	stageViewerAssets(t, bv)
+
+	repoDir := createSimpleRepo(t, 5)
+	exportDir := filepath.Join(repoDir, "bv-pages")
+
+	cmd := exec.Command(bv, "--export-pages", exportDir)
+	cmd.Dir = repoDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("--export-pages failed: %v\n%s", err, out)
+	}
+
+	// Read index.html
+	htmlBytes, err := os.ReadFile(filepath.Join(exportDir, "index.html"))
+	if err != nil {
+		t.Fatalf("read index.html: %v", err)
+	}
+	html := string(htmlBytes)
+
+	// Verify detail pane markup exists
+	detailPaneMarkers := []string{
+		"graphDetailNode",           // Alpine state variable
+		"x-show=\"graphDetailNode\"", // Conditional display
+		"graphDetailNode?.title",    // Title binding
+		"graphDetailNode?.status",   // Status binding
+		"graphDetailNode?.id",       // ID binding
+	}
+
+	for _, marker := range detailPaneMarkers {
+		if !strings.Contains(html, marker) {
+			t.Errorf("index.html missing detail pane marker: %s", marker)
+		}
+	}
+
+	// Verify detail pane close button exists
+	if !strings.Contains(html, "graphDetailNode = null") {
+		t.Error("index.html missing detail pane close button handler")
+	}
+}
+
+// TestExportPages_GraphLayoutStructure verifies graph_layout.json has correct structure
+func TestExportPages_GraphLayoutStructure(t *testing.T) {
+	bv := buildBvBinary(t)
+	stageViewerAssets(t, bv)
+
+	repoDir := createRepoWithDeps(t) // Use repo with dependencies for interesting layout
+	exportDir := filepath.Join(repoDir, "bv-pages")
+
+	cmd := exec.Command(bv, "--export-pages", exportDir)
+	cmd.Dir = repoDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("--export-pages failed: %v\n%s", err, out)
+	}
+
+	// Read graph_layout.json
+	layoutPath := filepath.Join(exportDir, "data", "graph_layout.json")
+	layoutBytes, err := os.ReadFile(layoutPath)
+	if err != nil {
+		t.Fatalf("read graph_layout.json: %v", err)
+	}
+
+	var layout struct {
+		Positions   map[string][2]float64 `json:"positions"`
+		Metrics     map[string][5]float64 `json:"metrics"`
+		Links       [][2]string           `json:"links"`
+		Cycles      [][]string            `json:"cycles"`
+		Version     string                `json:"version"`
+		GeneratedAt string                `json:"generated_at"`
+		NodeCount   int                   `json:"node_count"`
+		EdgeCount   int                   `json:"edge_count"`
+	}
+
+	if err := json.Unmarshal(layoutBytes, &layout); err != nil {
+		t.Fatalf("json decode graph_layout.json: %v", err)
+	}
+
+	// Verify structure fields
+	if layout.Version == "" {
+		t.Error("graph_layout.json missing version")
+	}
+	if layout.GeneratedAt == "" {
+		t.Error("graph_layout.json missing generated_at")
+	}
+	if layout.NodeCount == 0 {
+		t.Error("graph_layout.json has zero node_count")
+	}
+
+	// Verify positions exist for all nodes
+	if len(layout.Positions) == 0 {
+		t.Fatal("graph_layout.json has no positions")
+	}
+	if len(layout.Positions) != layout.NodeCount {
+		t.Errorf("positions count (%d) doesn't match node_count (%d)",
+			len(layout.Positions), layout.NodeCount)
+	}
+
+	// Verify each position has valid x,y coordinates
+	for id, pos := range layout.Positions {
+		// Positions should be finite numbers
+		if pos[0] != pos[0] || pos[1] != pos[1] { // NaN check
+			t.Errorf("position for %s contains NaN: %v", id, pos)
+		}
+	}
+
+	// Verify metrics exist for all nodes
+	if len(layout.Metrics) != layout.NodeCount {
+		t.Errorf("metrics count (%d) doesn't match node_count (%d)",
+			len(layout.Metrics), layout.NodeCount)
+	}
+
+	// Verify metrics have expected 5 elements (pagerank, betweenness, inDegree, outDegree, inCycle)
+	for id, m := range layout.Metrics {
+		// All metrics should be non-negative
+		for i, val := range m {
+			if val < 0 {
+				t.Errorf("metric[%d] for %s is negative: %v", i, id, val)
+			}
+		}
+	}
+
+	// Verify links array exists
+	// Links may be empty for repos without dependencies or may contain [source, target] pairs
+	t.Logf("graph_layout.json has %d nodes, %d edges",
+		layout.NodeCount, layout.EdgeCount)
+}
+
+// TestExportPages_GraphJSSelectNodeHandler verifies selectNode handler exists in graph.js
+func TestExportPages_GraphJSSelectNodeHandler(t *testing.T) {
+	bv := buildBvBinary(t)
+	stageViewerAssets(t, bv)
+
+	repoDir := createSimpleRepo(t, 3)
+	exportDir := filepath.Join(repoDir, "bv-pages")
+
+	cmd := exec.Command(bv, "--export-pages", exportDir)
+	cmd.Dir = repoDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("--export-pages failed: %v\n%s", err, out)
+	}
+
+	// Read graph.js
+	graphJSBytes, err := os.ReadFile(filepath.Join(exportDir, "graph.js"))
+	if err != nil {
+		t.Fatalf("read graph.js: %v", err)
+	}
+	graphJS := string(graphJSBytes)
+
+	// Verify selectNode function exists
+	handlers := []string{
+		"function selectNode",     // Function definition
+		"export function selectNode", // Or exported
+		"bv-graph:nodeClick",      // Custom event dispatch
+	}
+
+	foundSelectNode := false
+	for _, handler := range handlers[:2] {
+		if strings.Contains(graphJS, handler) {
+			foundSelectNode = true
+			break
+		}
+	}
+	if !foundSelectNode {
+		t.Error("graph.js missing selectNode function")
+	}
+
+	// Verify nodeClick event dispatch (uses template: `bv-graph:${name}`)
+	if !strings.Contains(graphJS, "nodeClick") {
+		t.Error("graph.js missing nodeClick event handler/dispatch")
+	}
+	// The event dispatching uses a helper function with template literal
+	if !strings.Contains(graphJS, "dispatchEvent") && !strings.Contains(graphJS, "CustomEvent") {
+		t.Error("graph.js missing event dispatch mechanism")
+	}
+
+	// Verify refresh/redraw capability
+	refreshHandlers := []string{
+		"refreshGraph",           // Custom helper
+		".graphData(",            // ForceGraph redraw pattern
+		"graphInstance.graphData", // Alternative pattern
+	}
+
+	foundRefresh := false
+	for _, h := range refreshHandlers {
+		if strings.Contains(graphJS, h) {
+			foundRefresh = true
+			break
+		}
+	}
+	if !foundRefresh {
+		t.Error("graph.js missing graph refresh/redraw capability")
+	}
+}
+
+// TestExportPages_GraphLayoutNodesCovered verifies all nodes get positions
+func TestExportPages_GraphLayoutNodesCovered(t *testing.T) {
+	bv := buildBvBinary(t)
+	stageViewerAssets(t, bv)
+
+	repoDir := createSimpleRepo(t, 5)
+	exportDir := filepath.Join(repoDir, "bv-pages")
+
+	cmd := exec.Command(bv, "--export-pages", exportDir)
+	cmd.Dir = repoDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("export failed: %v\n%s", err, out)
+	}
+
+	// Read layout
+	layoutBytes, err := os.ReadFile(filepath.Join(exportDir, "data", "graph_layout.json"))
+	if err != nil {
+		t.Fatalf("read layout: %v", err)
+	}
+
+	var layout struct {
+		Positions map[string][2]float64 `json:"positions"`
+		Metrics   map[string][5]float64 `json:"metrics"`
+		NodeCount int                   `json:"node_count"`
+	}
+	if err := json.Unmarshal(layoutBytes, &layout); err != nil {
+		t.Fatalf("decode layout: %v", err)
+	}
+
+	// Verify all nodes have positions and metrics
+	if len(layout.Positions) != layout.NodeCount {
+		t.Errorf("not all nodes have positions: %d positions for %d nodes",
+			len(layout.Positions), layout.NodeCount)
+	}
+	if len(layout.Metrics) != layout.NodeCount {
+		t.Errorf("not all nodes have metrics: %d metrics for %d nodes",
+			len(layout.Metrics), layout.NodeCount)
+	}
+
+	// Verify each node has both position and metrics
+	for id := range layout.Positions {
+		if _, ok := layout.Metrics[id]; !ok {
+			t.Errorf("node %s has position but no metrics", id)
+		}
+	}
+	for id := range layout.Metrics {
+		if _, ok := layout.Positions[id]; !ok {
+			t.Errorf("node %s has metrics but no position", id)
+		}
+	}
+}
+
+// TestExportPages_PrecomputedLayoutUsedByViewer verifies viewer.js loads precomputed layout
+func TestExportPages_PrecomputedLayoutUsedByViewer(t *testing.T) {
+	bv := buildBvBinary(t)
+	stageViewerAssets(t, bv)
+
+	repoDir := createSimpleRepo(t, 3)
+	exportDir := filepath.Join(repoDir, "bv-pages")
+
+	cmd := exec.Command(bv, "--export-pages", exportDir)
+	cmd.Dir = repoDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("--export-pages failed: %v\n%s", err, out)
+	}
+
+	// Read viewer.js
+	viewerJSBytes, err := os.ReadFile(filepath.Join(exportDir, "viewer.js"))
+	if err != nil {
+		t.Fatalf("read viewer.js: %v", err)
+	}
+	viewerJS := string(viewerJSBytes)
+
+	// Verify precomputed layout loading (viewer uses precomputedLayout variable)
+	if !strings.Contains(viewerJS, "precomputedLayout") &&
+		!strings.Contains(viewerJS, "graph_layout") {
+		t.Error("viewer.js doesn't reference precomputed layout")
+	}
+
+	// Verify ForceGraph integration markers
+	forceGraphMarkers := []string{
+		"ForceGraph",              // Library reference
+		"forceGraphModule",        // Module instance
+		"initForceGraphView",      // Init function
+	}
+
+	for _, marker := range forceGraphMarkers {
+		if !strings.Contains(viewerJS, marker) {
+			t.Errorf("viewer.js missing ForceGraph marker: %s", marker)
+		}
+	}
 }

@@ -2088,3 +2088,516 @@ func TestHistoryModel_ViewModeToggle_PreservesIcon(t *testing.T) {
 		t.Error("Expected ◈ icon for bead mode")
 	}
 }
+
+// =============================================================================
+// FILE TREE TESTS (bv-qr24)
+// =============================================================================
+
+// createTestHistoryReportWithFiles creates a test report with file changes
+func createTestHistoryReportWithFiles() *correlation.HistoryReport {
+	now := time.Now()
+
+	return &correlation.HistoryReport{
+		GeneratedAt: now,
+		Stats: correlation.HistoryStats{
+			TotalBeads:       3,
+			BeadsWithCommits: 3,
+			TotalCommits:     5,
+			UniqueAuthors:    2,
+		},
+		Histories: map[string]correlation.BeadHistory{
+			"bv-1": {
+				BeadID: "bv-1",
+				Title:  "Fix authentication bug",
+				Status: "closed",
+				Commits: []correlation.CorrelatedCommit{
+					{
+						SHA:        "abc123",
+						ShortSHA:   "abc123",
+						Message:    "fix: auth bug",
+						Author:     "Dev One",
+						Timestamp:  now,
+						Method:     correlation.MethodCoCommitted,
+						Confidence: 0.95,
+						Files: []correlation.FileChange{
+							{Path: "pkg/auth/token.go", Action: "M", Insertions: 10, Deletions: 5},
+							{Path: "pkg/auth/session.go", Action: "M", Insertions: 5, Deletions: 2},
+						},
+					},
+					{
+						SHA:        "def456",
+						ShortSHA:   "def456",
+						Message:    "test: add auth tests",
+						Author:     "Dev One",
+						Timestamp:  now.Add(-time.Hour),
+						Method:     correlation.MethodExplicitID,
+						Confidence: 0.90,
+						Files: []correlation.FileChange{
+							{Path: "pkg/auth/token_test.go", Action: "A", Insertions: 50},
+							{Path: "pkg/auth/session_test.go", Action: "A", Insertions: 30},
+						},
+					},
+				},
+			},
+			"bv-2": {
+				BeadID: "bv-2",
+				Title:  "Add logging",
+				Status: "open",
+				Commits: []correlation.CorrelatedCommit{
+					{
+						SHA:        "ghi789",
+						ShortSHA:   "ghi789",
+						Message:    "feat: add logging",
+						Author:     "Dev Two",
+						Timestamp:  now.Add(-2 * time.Hour),
+						Method:     correlation.MethodTemporalAuthor,
+						Confidence: 0.60,
+						Files: []correlation.FileChange{
+							{Path: "pkg/logging/logger.go", Action: "A", Insertions: 100},
+							{Path: "pkg/auth/token.go", Action: "M", Insertions: 3, Deletions: 1},
+						},
+					},
+				},
+			},
+			"bv-3": {
+				BeadID: "bv-3",
+				Title:  "Refactor database",
+				Status: "in_progress",
+				Commits: []correlation.CorrelatedCommit{
+					{
+						SHA:        "jkl012",
+						ShortSHA:   "jkl012",
+						Message:    "refactor: db layer",
+						Author:     "Dev Two",
+						Timestamp:  now.Add(-3 * time.Hour),
+						Method:     correlation.MethodCoCommitted,
+						Confidence: 0.92,
+						Files: []correlation.FileChange{
+							{Path: "pkg/db/connection.go", Action: "M", Insertions: 20, Deletions: 30},
+							{Path: "pkg/db/query.go", Action: "M", Insertions: 15, Deletions: 10},
+							{Path: "README.md", Action: "M", Insertions: 5, Deletions: 2},
+						},
+					},
+				},
+			},
+		},
+		CommitIndex: correlation.CommitIndex{
+			"abc123": {"bv-1"},
+			"def456": {"bv-1"},
+			"ghi789": {"bv-2"},
+			"jkl012": {"bv-3"},
+		},
+	}
+}
+
+func TestFileTree_Toggle(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	// Initially not visible
+	if h.IsFileTreeVisible() {
+		t.Error("File tree should be hidden initially")
+	}
+
+	// Toggle to show
+	h.ToggleFileTree()
+	if !h.IsFileTreeVisible() {
+		t.Error("File tree should be visible after toggle")
+	}
+
+	// Tree should be built
+	if h.fileTree == nil {
+		t.Error("File tree should be built after showing")
+	}
+
+	// Toggle to hide
+	h.ToggleFileTree()
+	if h.IsFileTreeVisible() {
+		t.Error("File tree should be hidden after second toggle")
+	}
+}
+
+func TestFileTree_BuildsCorrectStructure(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	// Should have root level directories/files
+	if len(h.fileTree) == 0 {
+		t.Fatal("File tree should have root nodes")
+	}
+
+	// Check for expected structure: pkg/ and README.md
+	var foundPkg, foundReadme bool
+	for _, node := range h.fileTree {
+		if node.Name == "pkg" && node.IsDir {
+			foundPkg = true
+		}
+		if node.Name == "README.md" && !node.IsDir {
+			foundReadme = true
+		}
+	}
+
+	if !foundPkg {
+		t.Error("Expected pkg/ directory in file tree")
+	}
+	if !foundReadme {
+		t.Error("Expected README.md in file tree")
+	}
+
+	// Directories should be sorted before files
+	if len(h.fileTree) >= 2 && !h.fileTree[0].IsDir && h.fileTree[len(h.fileTree)-1].IsDir {
+		t.Error("Directories should come before files in tree")
+	}
+}
+
+func TestFileTree_Navigation(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	// Initial position should be 0
+	if h.selectedFileIdx != 0 {
+		t.Errorf("Initial selectedFileIdx = %d, want 0", h.selectedFileIdx)
+	}
+
+	// Move down
+	h.MoveDownFileTree()
+	if h.selectedFileIdx != 1 {
+		t.Errorf("selectedFileIdx after MoveDown = %d, want 1", h.selectedFileIdx)
+	}
+
+	// Move up
+	h.MoveUpFileTree()
+	if h.selectedFileIdx != 0 {
+		t.Errorf("selectedFileIdx after MoveUp = %d, want 0", h.selectedFileIdx)
+	}
+
+	// Should not go below 0
+	h.MoveUpFileTree()
+	if h.selectedFileIdx != 0 {
+		t.Error("selectedFileIdx should stay at 0 when moving up at start")
+	}
+
+	// Move to end
+	for i := 0; i < 100; i++ {
+		h.MoveDownFileTree()
+	}
+	lastIdx := h.selectedFileIdx
+
+	// Should not exceed list length - 1
+	if lastIdx >= len(h.flatFileList) {
+		t.Errorf("selectedFileIdx %d should be less than flatFileList length %d", lastIdx, len(h.flatFileList))
+	}
+
+	// Should not go past end
+	h.MoveDownFileTree()
+	if h.selectedFileIdx != lastIdx {
+		t.Error("selectedFileIdx should not exceed list bounds")
+	}
+}
+
+func TestFileTree_ExpandCollapse(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	// Find pkg directory (should be first since dirs come before files)
+	var pkgIdx int
+	for i, node := range h.flatFileList {
+		if node.Name == "pkg" && node.IsDir {
+			pkgIdx = i
+			break
+		}
+	}
+
+	// Navigate to pkg
+	h.selectedFileIdx = pkgIdx
+	node := h.SelectedFileNode()
+	if node == nil || !node.IsDir {
+		t.Fatal("Should have selected pkg directory")
+	}
+
+	initialCount := len(h.flatFileList)
+
+	// Expand
+	if node.Expanded {
+		t.Error("Node should not be expanded initially")
+	}
+	h.ToggleExpandFile()
+	node = h.flatFileList[pkgIdx]
+	if !node.Expanded {
+		t.Error("Node should be expanded after toggle")
+	}
+
+	// List should now include children
+	expandedCount := len(h.flatFileList)
+	if expandedCount <= initialCount {
+		t.Errorf("flatFileList should grow after expand: was %d, now %d", initialCount, expandedCount)
+	}
+
+	// Collapse
+	h.ToggleExpandFile()
+	if h.flatFileList[pkgIdx].Expanded {
+		t.Error("Node should be collapsed after second toggle")
+	}
+
+	// List should return to original size
+	collapsedCount := len(h.flatFileList)
+	if collapsedCount != initialCount {
+		t.Errorf("flatFileList should return to original size: was %d, now %d", initialCount, collapsedCount)
+	}
+}
+
+func TestFileTree_CollapseNode(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	// Find and expand pkg directory
+	var pkgIdx int
+	for i, node := range h.flatFileList {
+		if node.Name == "pkg" && node.IsDir {
+			pkgIdx = i
+			break
+		}
+	}
+	h.selectedFileIdx = pkgIdx
+	h.ToggleExpandFile()
+
+	// Navigate into expanded directory
+	h.MoveDownFileTree()
+
+	// Collapse parent from child
+	h.selectedFileIdx = pkgIdx
+	h.CollapseFileNode()
+	if h.flatFileList[pkgIdx].Expanded {
+		t.Error("CollapseFileNode should collapse the directory")
+	}
+}
+
+func TestFileTree_SelectFile(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	// Expand to reach a file
+	for i, node := range h.flatFileList {
+		if node.Name == "pkg" && node.IsDir {
+			h.selectedFileIdx = i
+			h.ToggleExpandFile()
+			break
+		}
+	}
+
+	// Find auth directory and expand it
+	for i, node := range h.flatFileList {
+		if node.Name == "auth" && node.IsDir {
+			h.selectedFileIdx = i
+			h.ToggleExpandFile()
+			break
+		}
+	}
+
+	// Find a .go file
+	var fileIdx int
+	var filePath string
+	for i, node := range h.flatFileList {
+		if !node.IsDir && strings.HasSuffix(node.Name, ".go") {
+			fileIdx = i
+			filePath = node.Path
+			break
+		}
+	}
+
+	if filePath == "" {
+		t.Fatal("Should have found a .go file")
+	}
+
+	h.selectedFileIdx = fileIdx
+
+	// No filter initially
+	if h.GetFileFilter() != "" {
+		t.Error("Filter should be empty initially")
+	}
+
+	// Select file to set filter
+	h.SelectFile()
+	if h.GetFileFilter() != filePath {
+		t.Errorf("Filter should be %q, got %q", filePath, h.GetFileFilter())
+	}
+
+	// Select same file again to clear filter
+	h.SelectFile()
+	if h.GetFileFilter() != "" {
+		t.Error("Filter should be cleared after selecting same file again")
+	}
+
+	// Set filter again and clear with ClearFileFilter
+	h.SelectFile()
+	h.ClearFileFilter()
+	if h.GetFileFilter() != "" {
+		t.Error("ClearFileFilter should clear the filter")
+	}
+}
+
+func TestFileTree_Focus(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	// Initially no focus
+	if h.FileTreeHasFocus() {
+		t.Error("File tree should not have focus initially")
+	}
+
+	// Set focus
+	h.SetFileTreeFocus(true)
+	if !h.FileTreeHasFocus() {
+		t.Error("File tree should have focus after SetFileTreeFocus(true)")
+	}
+
+	// Clear focus
+	h.SetFileTreeFocus(false)
+	if h.FileTreeHasFocus() {
+		t.Error("File tree should not have focus after SetFileTreeFocus(false)")
+	}
+}
+
+func TestFileTree_SelectedFileName(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	// Should have a selected name
+	name := h.SelectedFileName()
+	if name == "" {
+		t.Error("SelectedFileName should return a name when tree has nodes")
+	}
+
+	// Navigate down and check name changes
+	h.MoveDownFileTree()
+	name2 := h.SelectedFileName()
+	if name2 == "" {
+		t.Error("SelectedFileName should return name after navigation")
+	}
+}
+
+func TestFileTree_SelectedFileNode(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	node := h.SelectedFileNode()
+	if node == nil {
+		t.Fatal("SelectedFileNode should return a node when tree has nodes")
+	}
+
+	if node.Name == "" {
+		t.Error("Selected node should have a name")
+	}
+
+	if node.Path == "" {
+		t.Error("Selected node should have a path")
+	}
+}
+
+func TestFileTree_EmptyReport(t *testing.T) {
+	theme := testTheme()
+
+	// Test with nil report
+	h := NewHistoryModel(nil, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	if h.fileTree != nil {
+		t.Error("File tree should be nil for nil report")
+	}
+
+	// SelectedFileName and SelectedFileNode should handle gracefully
+	if h.SelectedFileName() != "" {
+		t.Error("SelectedFileName should return empty for nil tree")
+	}
+	if h.SelectedFileNode() != nil {
+		t.Error("SelectedFileNode should return nil for nil tree")
+	}
+}
+
+func TestFileTree_StatePreservedOnToggle(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	// Expand a directory
+	for i, node := range h.flatFileList {
+		if node.IsDir {
+			h.selectedFileIdx = i
+			h.ToggleExpandFile()
+			break
+		}
+	}
+
+	// Move to a specific position
+	h.MoveDownFileTree()
+	h.MoveDownFileTree()
+	savedIdx := h.selectedFileIdx
+
+	// Hide and show file tree
+	h.ToggleFileTree()
+	h.ToggleFileTree()
+
+	// Position should be preserved
+	if h.selectedFileIdx != savedIdx {
+		t.Errorf("selectedFileIdx should be preserved: was %d, now %d", savedIdx, h.selectedFileIdx)
+	}
+}
+
+func TestFileTree_RenderPanel(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	// renderFileTreePanel should produce non-empty output
+	panel := h.renderFileTreePanel(40, 20)
+	if panel == "" {
+		t.Error("renderFileTreePanel should produce output")
+	}
+
+	// Should contain "FILES" header
+	if !strings.Contains(panel, "FILES") {
+		t.Error("File tree panel should contain 'FILES' header")
+	}
+}
