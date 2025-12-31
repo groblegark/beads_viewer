@@ -156,27 +156,21 @@ func TestHelpFlag_DocumentsUpdateFeatures(t *testing.T) {
 // TUI keyboard shortcut tests (via robot mode if available)
 // ============================================================================
 
-func TestRobotKeys_DocumentsUShortcut(t *testing.T) {
-	// If there's a robot-keys or similar endpoint, test it here
-	// For now, we verify the help content documents the U key
+func TestRobotHelp_DocumentsUpdateFeatures(t *testing.T) {
+	// Verify robot-help documents update-related features
 	bv := buildBvBinary(t)
 
-	// Check if --robot-keys exists
-	cmd := exec.Command(bv, "--robot-keys")
+	cmd := exec.Command(bv, "-robot-help")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		// Flag might not exist, skip this test
-		t.Skip("--robot-keys not available")
+		t.Fatalf("-robot-help failed: %v\n%s", err, out)
 	}
 
 	output := string(out)
 
-	// If robot-keys exists, it should document the U key for self-update
-	if strings.Contains(output, "\"key\"") || strings.Contains(output, "keys") {
-		// This is a keys endpoint, check for U
-		if !strings.Contains(output, "\"U\"") && !strings.Contains(output, "update") {
-			t.Logf("robot-keys output doesn't mention U shortcut: %s", output)
-		}
+	// Robot help should mention update-related commands
+	if !strings.Contains(output, "update") && !strings.Contains(output, "version") {
+		t.Logf("robot-help doesn't mention update features (may be expected): %s", output)
 	}
 }
 
@@ -199,17 +193,17 @@ func TestStartup_UpdateCheckDoesNotBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Run robot-list which should complete quickly
-	cmd := exec.Command(bv, "--robot-list")
+	// Run robot-insights which should complete quickly
+	cmd := exec.Command(bv, "-robot-insights")
 	cmd.Dir = tmpDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("--robot-list failed: %v\n%s", err, out)
+		t.Fatalf("-robot-insights failed: %v\n%s", err, out)
 	}
 
-	// Should contain the test issue
-	if !strings.Contains(string(out), "TEST-1") {
-		t.Errorf("expected TEST-1 in output, got: %s", out)
+	// Should contain JSON output
+	if !strings.Contains(string(out), "data_hash") {
+		t.Errorf("expected data_hash in output, got: %s", out)
 	}
 }
 
