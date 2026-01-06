@@ -2716,8 +2716,7 @@ func (m Model) handleTreeKeys(msg tea.KeyMsg) Model {
 	case "l", "right":
 		m.tree.ExpandOrMoveToChild()
 	case "g":
-		// Double-tap g for jump to top (handled via waitingForG in main handler)
-		// Single g handled here as tree-specific
+		// Jump to top (vim-style)
 		m.tree.JumpToTop()
 	case "G":
 		m.tree.JumpToBottom()
