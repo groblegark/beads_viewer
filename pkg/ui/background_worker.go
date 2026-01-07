@@ -211,6 +211,11 @@ func (w *BackgroundWorker) process() {
 	snapshot := w.buildSnapshot()
 
 	w.mu.Lock()
+	// Check if stopped while we were processing - don't overwrite stopped state
+	if w.state == WorkerStopped {
+		w.mu.Unlock()
+		return
+	}
 	w.snapshot = snapshot
 	wasDirty := w.dirty
 	w.state = WorkerIdle
