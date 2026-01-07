@@ -441,6 +441,8 @@ func (s *GraphStats) CriticalPathRank() map[string]int {
 }
 
 func (s *GraphStats) InDegreeRank() map[string]int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if s.inDegreeRank == nil {
 		return nil
 	}
@@ -452,6 +454,8 @@ func (s *GraphStats) InDegreeRank() map[string]int {
 }
 
 func (s *GraphStats) OutDegreeRank() map[string]int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if s.outDegreeRank == nil {
 		return nil
 	}
