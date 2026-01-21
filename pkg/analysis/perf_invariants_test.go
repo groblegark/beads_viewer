@@ -141,7 +141,7 @@ func TestBuildUnblocksMap_MatchesReference(t *testing.T) {
 	}
 
 	analyzer := NewAnalyzer(issues)
-	got := buildUnblocksMap(analyzer, issues)
+	got := buildUnblocksMap(analyzer)
 	want := referenceUnblocksMap(issues)
 
 	// Sanity-check the reference expectations (guards the guardrail).

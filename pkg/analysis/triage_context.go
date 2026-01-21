@@ -1,7 +1,6 @@
 package analysis
 
 import (
-	"sort"
 	"sync"
 
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
@@ -234,87 +233,10 @@ func (ctx *TriageContext) UnblocksMap() map[string][]string {
 		return ctx.unblocksMap
 	}
 
-	// Get issues from analyzer
-	issues := make([]model.Issue, 0, len(ctx.analyzer.issueMap))
-	for _, issue := range ctx.analyzer.issueMap {
-		issues = append(issues, issue)
-	}
-
 	// Compute unblocks using the same logic as buildUnblocksMap
-	ctx.unblocksMap = ctx.computeUnblocksMapInternal(issues)
+	ctx.unblocksMap = buildUnblocksMap(ctx.analyzer)
 	ctx.unblocksComputed = true
 	return ctx.unblocksMap
-}
-
-// computeUnblocksMapInternal implements the unblocks logic.
-// MUST be called while holding the lock.
-func (ctx *TriageContext) computeUnblocksMapInternal(issues []model.Issue) map[string][]string {
-	issueByID := ctx.analyzer.issueMap
-
-	// blockerID -> dependents that have a blocking dep on blockerID
-	dependentsByBlocker := make(map[string][]string)
-	// dependentID -> number of currently-open blocking deps
-	openBlockerCount := make(map[string]int, len(issues))
-	// seenByBlocker uses a per-issue epoch to avoid per-dependent map allocations.
-	// Value == epoch means "already seen for current dependent".
-	seenByBlocker := make(map[string]int, len(issues))
-	epoch := 0
-
-	for _, dependent := range issues {
-		epoch++
-		if isClosedLikeStatus(dependent.Status) {
-			continue
-		}
-		if len(dependent.Dependencies) == 0 {
-			continue
-		}
-
-		for _, dep := range dependent.Dependencies {
-			if dep == nil || !dep.Type.IsBlocking() {
-				continue
-			}
-			blockerID := dep.DependsOnID
-			if blockerID == "" {
-				continue
-			}
-			blocker, exists := issueByID[blockerID]
-			if !exists {
-				continue
-			}
-			if seenByBlocker[blockerID] == epoch {
-				continue
-			}
-			seenByBlocker[blockerID] = epoch
-
-			dependentsByBlocker[blockerID] = append(dependentsByBlocker[blockerID], dependent.ID)
-			if !isClosedLikeStatus(blocker.Status) {
-				openBlockerCount[dependent.ID]++
-			}
-		}
-	}
-
-	unblocksMap := make(map[string][]string, len(issues))
-	for _, blocker := range issues {
-		if isClosedLikeStatus(blocker.Status) {
-			continue
-		}
-
-		var unblocks []string
-		for _, dependentID := range dependentsByBlocker[blocker.ID] {
-			depIssue, ok := issueByID[dependentID]
-			if !ok || isClosedLikeStatus(depIssue.Status) {
-				continue
-			}
-			if openBlockerCount[dependentID] == 1 {
-				unblocks = append(unblocks, dependentID)
-			}
-		}
-
-		sort.Strings(unblocks)
-		unblocksMap[blocker.ID] = unblocks
-	}
-
-	return unblocksMap
 }
 
 // Unblocks returns the IDs of issues that would be unblocked if this issue

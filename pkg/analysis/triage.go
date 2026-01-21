@@ -403,7 +403,7 @@ func ComputeTriageFromAnalyzer(analyzer *Analyzer, stats *GraphStats, issues []m
 	impactScores := analyzer.ComputeImpactScoresFromStats(stats, now)
 
 	// Build unblocks map
-	unblocksMap := buildUnblocksMap(analyzer, issues)
+	unblocksMap := buildUnblocksMap(analyzer)
 
 	// Compute counts (uses cached actionable issues)
 	counts := computeCountsWithContext(issues, triageCtx)
@@ -534,7 +534,7 @@ func ComputeStaleness(history *correlation.HistoryReport, issues []model.Issue, 
 }
 
 // buildUnblocksMap computes what each issue unblocks
-func buildUnblocksMap(analyzer *Analyzer, issues []model.Issue) map[string][]string {
+func buildUnblocksMap(analyzer *Analyzer) map[string][]string {
 	// O(E) unblocks computation.
 	//
 	// Semantics (must match Analyzer.computeUnblocks):
@@ -544,70 +544,74 @@ func buildUnblocksMap(analyzer *Analyzer, issues []model.Issue) map[string][]str
 	// - Closing blocker B unblocks dependent D iff all other existing blocking deps of D are closed.
 	// - Closed/tombstone dependents are ignored.
 	// - Result slices are sorted for determinism.
+	if analyzer == nil || analyzer.g == nil {
+		return map[string][]string{}
+	}
 
-	issueByID := analyzer.issueMap
+	nodeCount := analyzer.g.Nodes().Len()
+	if nodeCount == 0 {
+		return map[string][]string{}
+	}
 
-	// blockerID -> dependents that have a blocking dep on blockerID (deduped per dependent)
-	dependentsByBlocker := make(map[string][]string)
-	// dependentID -> number of currently-open blocking deps (existing + blocking + unique)
-	openBlockerCount := make(map[string]int, len(issues))
-	// seenByBlocker uses a per-issue epoch to avoid per-dependent map allocations.
-	// Value == epoch means "already seen for current dependent".
-	seenByBlocker := make(map[string]int, len(issues))
-	epoch := 0
-
-	for _, dependent := range issues {
-		epoch++
-		if isClosedLikeStatus(dependent.Status) {
+	open := make([]bool, nodeCount)
+	for id, issue := range analyzer.issueMap {
+		nodeID, ok := analyzer.idToNode[id]
+		if !ok || nodeID < 0 || int(nodeID) >= nodeCount {
 			continue
 		}
-		if len(dependent.Dependencies) == 0 {
+		if !isClosedLikeStatus(issue.Status) {
+			open[nodeID] = true
+		}
+	}
+
+	openBlockerCount := make([]int, nodeCount)
+	nodes := analyzer.g.Nodes()
+	for nodes.Next() {
+		u := nodes.Node().ID()
+		if u < 0 || int(u) >= nodeCount || !open[u] {
 			continue
 		}
-
-		for _, dep := range dependent.Dependencies {
-			if dep == nil || !dep.Type.IsBlocking() {
+		blockers := analyzer.g.From(u)
+		for blockers.Next() {
+			v := blockers.Node().ID()
+			if v < 0 || int(v) >= nodeCount {
 				continue
 			}
-			blockerID := dep.DependsOnID
-			if blockerID == "" {
-				continue
-			}
-			blocker, exists := issueByID[blockerID]
-			if !exists {
-				continue
-			}
-			if seenByBlocker[blockerID] == epoch {
-				continue
-			}
-			seenByBlocker[blockerID] = epoch
-
-			dependentsByBlocker[blockerID] = append(dependentsByBlocker[blockerID], dependent.ID)
-			if !isClosedLikeStatus(blocker.Status) {
-				openBlockerCount[dependent.ID]++
+			if open[v] {
+				openBlockerCount[u]++
 			}
 		}
 	}
 
-	unblocksMap := make(map[string][]string, len(issues))
-	for _, blocker := range issues {
-		if isClosedLikeStatus(blocker.Status) {
+	unblocksMap := make(map[string][]string, nodeCount)
+	nodes = analyzer.g.Nodes()
+	for nodes.Next() {
+		v := nodes.Node().ID()
+		if v < 0 || int(v) >= nodeCount || !open[v] {
+			continue
+		}
+		blockerID := analyzer.nodeToID[v]
+		if blockerID == "" {
 			continue
 		}
 
+		dependents := analyzer.g.To(v)
 		var unblocks []string
-		for _, dependentID := range dependentsByBlocker[blocker.ID] {
-			depIssue, ok := issueByID[dependentID]
-			if !ok || isClosedLikeStatus(depIssue.Status) {
+		for dependents.Next() {
+			u := dependents.Node().ID()
+			if u < 0 || int(u) >= nodeCount || !open[u] {
 				continue
 			}
-			if openBlockerCount[dependentID] == 1 {
-				unblocks = append(unblocks, dependentID)
+			if openBlockerCount[u] == 1 {
+				dependentID := analyzer.nodeToID[u]
+				if dependentID != "" {
+					unblocks = append(unblocks, dependentID)
+				}
 			}
 		}
 
 		sort.Strings(unblocks)
-		unblocksMap[blocker.ID] = unblocks
+		unblocksMap[blockerID] = unblocks
 	}
 
 	return unblocksMap
@@ -1053,7 +1057,7 @@ func ComputeTriageScoresWithOptions(issues []model.Issue, opts TriageScoringOpti
 	baseScores := analyzer.ComputeImpactScores()
 
 	// Build unblocks map for factor calculation
-	unblocksMap := buildUnblocksMap(analyzer, issues)
+	unblocksMap := buildUnblocksMap(analyzer)
 
 	return computeTriageScoresFromImpact(baseScores, unblocksMap, analyzer, opts)
 }
@@ -1452,7 +1456,7 @@ func GenerateTriageReasonsForScore(score TriageScore, triageCtx *TriageContext) 
 		Issue:           issue,
 		TriageScore:     &score,
 		UnblocksIDs:     unblocksMap[score.IssueID],
-		BlockedByIDs:    triageCtx.OpenBlockers(score.IssueID),   // cached
+		BlockedByIDs:    triageCtx.OpenBlockers(score.IssueID), // cached
 		DaysSinceUpdate: daysSinceUpdate,
 		IsQuickWin:      isQuickWin,
 		BlockerDepth:    triageCtx.BlockerDepth(score.IssueID), // cached
