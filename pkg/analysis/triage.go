@@ -551,8 +551,13 @@ func buildUnblocksMap(analyzer *Analyzer, issues []model.Issue) map[string][]str
 	dependentsByBlocker := make(map[string][]string)
 	// dependentID -> number of currently-open blocking deps (existing + blocking + unique)
 	openBlockerCount := make(map[string]int, len(issues))
+	// seenByBlocker uses a per-issue epoch to avoid per-dependent map allocations.
+	// Value == epoch means "already seen for current dependent".
+	seenByBlocker := make(map[string]int, len(issues))
+	epoch := 0
 
 	for _, dependent := range issues {
+		epoch++
 		if isClosedLikeStatus(dependent.Status) {
 			continue
 		}
@@ -560,7 +565,6 @@ func buildUnblocksMap(analyzer *Analyzer, issues []model.Issue) map[string][]str
 			continue
 		}
 
-		seen := make(map[string]struct{}, len(dependent.Dependencies))
 		for _, dep := range dependent.Dependencies {
 			if dep == nil || !dep.Type.IsBlocking() {
 				continue
@@ -573,10 +577,10 @@ func buildUnblocksMap(analyzer *Analyzer, issues []model.Issue) map[string][]str
 			if !exists {
 				continue
 			}
-			if _, dup := seen[blockerID]; dup {
+			if seenByBlocker[blockerID] == epoch {
 				continue
 			}
-			seen[blockerID] = struct{}{}
+			seenByBlocker[blockerID] = epoch
 
 			dependentsByBlocker[blockerID] = append(dependentsByBlocker[blockerID], dependent.ID)
 			if !isClosedLikeStatus(blocker.Status) {
