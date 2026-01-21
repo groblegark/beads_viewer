@@ -2478,32 +2478,46 @@ func main() {
 		// We use a best-effort approach here - if history isn't available or fails,
 		// we just proceed without staleness data.
 		var historyReport *correlation.HistoryReport
-		if cwd, err := os.Getwd(); err == nil {
-			if beadsDir, err := loader.GetBeadsDir(""); err == nil {
-				if beadsPath, err := loader.FindJSONLPath(beadsDir); err == nil {
-					// Use a smaller limit for triage to keep it fast, unless overridden
-					limit := *historyLimit
-					if limit == 500 { // If default
-						limit = 200 // Use smaller default for triage
-					}
 
-					// Validate repo first
-					if correlation.ValidateRepository(cwd) == nil {
-						beadInfos := make([]correlation.BeadInfo, len(issues))
-						for i, issue := range issues {
-							beadInfos[i] = correlation.BeadInfo{
-								ID:     issue.ID,
-								Title:  issue.Title,
-								Status: string(issue.Status),
-							}
+		// bv-perf: Skip history loading if no open issues exist
+		// ComputeStaleness only processes open issues, so loading git history
+		// is wasted work when all issues are closed.
+		hasOpenIssues := false
+		for _, issue := range issues {
+			if issue.Status != model.StatusClosed && issue.Status != model.StatusTombstone {
+				hasOpenIssues = true
+				break
+			}
+		}
+
+		if hasOpenIssues {
+			if cwd, err := os.Getwd(); err == nil {
+				if beadsDir, err := loader.GetBeadsDir(""); err == nil {
+					if beadsPath, err := loader.FindJSONLPath(beadsDir); err == nil {
+						// Use a smaller limit for triage to keep it fast, unless overridden
+						limit := *historyLimit
+						if limit == 500 { // If default
+							limit = 200 // Use smaller default for triage
 						}
 
-						correlator := correlation.NewCorrelator(cwd, beadsPath)
-						opts := correlation.CorrelatorOptions{Limit: limit}
-						
-						// Swallow errors for triage flow - staleness is optional
-						if report, err := correlator.GenerateReport(beadInfos, opts); err == nil {
-							historyReport = report
+						// Validate repo first
+						if correlation.ValidateRepository(cwd) == nil {
+							beadInfos := make([]correlation.BeadInfo, len(issues))
+							for i, issue := range issues {
+								beadInfos[i] = correlation.BeadInfo{
+									ID:     issue.ID,
+									Title:  issue.Title,
+									Status: string(issue.Status),
+								}
+							}
+
+							correlator := correlation.NewCorrelator(cwd, beadsPath)
+							opts := correlation.CorrelatorOptions{Limit: limit}
+
+							// Swallow errors for triage flow - staleness is optional
+							if report, err := correlator.GenerateReport(beadInfos, opts); err == nil {
+								historyReport = report
+							}
 						}
 					}
 				}
