@@ -324,6 +324,7 @@ func cloneIssuesForAsync(issues []model.Issue) []model.Issue {
 type Model struct {
 	// Data
 	issues       []model.Issue
+	pooledIssues []*model.Issue // Issue pool refs for sync reloads (return to pool on replace)
 	issueMap     map[string]*model.Issue
 	analyzer     *analysis.Analyzer
 	analysis     *analysis.GraphStats
@@ -698,7 +699,7 @@ func (m *Model) issuesForAsync() []model.Issue {
 	if m == nil {
 		return nil
 	}
-	if m.snapshot != nil && len(m.snapshot.pooledIssues) > 0 {
+	if (m.snapshot != nil && len(m.snapshot.pooledIssues) > 0) || len(m.pooledIssues) > 0 {
 		return cloneIssuesForAsync(m.issues)
 	}
 	return m.issues
@@ -1511,6 +1512,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.countReady = msg.Snapshot.CountReady
 		m.countBlocked = msg.Snapshot.CountBlocked
 		m.countClosed = msg.Snapshot.CountClosed
+		if len(m.pooledIssues) > 0 {
+			go loader.ReturnIssuePtrsToPool(m.pooledIssues)
+			m.pooledIssues = nil
+		}
 		// Preserve existing triage data unless the snapshot has Phase 2 results.
 		// Avoid flicker when Phase 1 snapshots arrive without triage data.
 		if msg.Snapshot.Phase2Ready || len(msg.Snapshot.TriageScores) > 0 {
@@ -1801,6 +1806,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(cmds...)
 		}
+		reloadStart := time.Now()
 
 		// Clear ephemeral overlays tied to old data
 		m.clearAttentionOverlay()
@@ -1818,10 +1824,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Reload issues from disk
 		// Use custom warning handler to prevent stderr pollution during TUI render (bv-fix)
 		var reloadWarnings []string
-		newIssues, err := loader.LoadIssuesFromFileWithOptions(m.beadsPath, loader.ParseOptions{
+		loadedIssues, err := loader.LoadIssuesFromFileWithOptionsPooled(m.beadsPath, loader.ParseOptions{
 			WarningHandler: func(msg string) {
 				reloadWarnings = append(reloadWarnings, msg)
 			},
+			BufferSize: envMaxLineSizeBytes(),
 		})
 		if err != nil {
 			m.statusMsg = fmt.Sprintf("Reload error: %v", err)
@@ -1832,6 +1839,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(cmds...)
 		}
+		if len(m.pooledIssues) > 0 {
+			loader.ReturnIssuePtrsToPool(m.pooledIssues)
+		}
+		m.pooledIssues = loadedIssues.PoolRefs
+		newIssues := loadedIssues.Issues
 
 		// Store selected issue ID to restore position after reload
 		var selectedID string
@@ -1950,26 +1962,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Regenerate sub-views (with Phase 1 data; Phase 2 will update via Phase2ReadyMsg)
 		// Preserve triage data already computed to avoid UI flicker.
-		oldTopPicks := m.insightsPanel.topPicks
-		oldRecs := m.insightsPanel.recommendations
-		oldRecMap := m.insightsPanel.recommendationMap
-		oldHash := m.insightsPanel.triageDataHash
-
-		ins := m.analysis.GenerateInsights(len(m.issues))
-		m.insightsPanel = NewInsightsModel(ins, m.issueMap, m.theme)
-		m.insightsPanel.topPicks = oldTopPicks
-		m.insightsPanel.recommendations = oldRecs
-		m.insightsPanel.recommendationMap = oldRecMap
-		m.insightsPanel.triageDataHash = oldHash
-		bodyHeight := m.height - 1
-		if bodyHeight < 5 {
-			bodyHeight = 5
+		needsInsights := m.focused == focusInsights && !m.showAttentionView
+		needsGraph := m.isGraphView
+		var ins analysis.Insights
+		if needsInsights || needsGraph {
+			ins = m.analysis.GenerateInsights(len(m.issues))
 		}
-		m.insightsPanel.SetSize(m.width, bodyHeight)
-		m.graphView.SetIssues(m.issues, &ins)
+		if needsInsights {
+			oldTopPicks := m.insightsPanel.topPicks
+			oldRecs := m.insightsPanel.recommendations
+			oldRecMap := m.insightsPanel.recommendationMap
+			oldHash := m.insightsPanel.triageDataHash
 
-		// Generate priority recommendations now that Phase 2 is ready
-		m.board = NewBoardModel(m.issues, m.theme)
+			m.insightsPanel = NewInsightsModel(ins, m.issueMap, m.theme)
+			m.insightsPanel.topPicks = oldTopPicks
+			m.insightsPanel.recommendations = oldRecs
+			m.insightsPanel.recommendationMap = oldRecMap
+			m.insightsPanel.triageDataHash = oldHash
+			bodyHeight := m.height - 1
+			if bodyHeight < 5 {
+				bodyHeight = 5
+			}
+			m.insightsPanel.SetSize(m.width, bodyHeight)
+		}
+		if m.showAttentionView {
+			cfg := analysis.DefaultLabelHealthConfig()
+			m.attentionCache = analysis.ComputeLabelAttentionScores(m.issues, cfg, time.Now().UTC())
+			m.attentionCached = true
+			attText, _ := ComputeAttentionView(m.issues, max(40, m.width-4))
+			m.insightsPanel = NewInsightsModel(analysis.Insights{}, m.issueMap, m.theme)
+			m.insightsPanel.labelAttention = m.attentionCache.Labels
+			m.insightsPanel.extraText = attText
+			panelHeight := m.height - 2
+			if panelHeight < 3 {
+				panelHeight = 3
+			}
+			m.insightsPanel.SetSize(m.width, panelHeight)
+		}
+		if needsGraph || m.isBoardView {
+			m.refreshBoardAndGraphForCurrentFilter()
+		}
 
 		// Re-apply recipe filter if active
 		if m.activeRecipe != nil {
@@ -2014,6 +2046,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(reloadWarnings) > 0 {
 			m.statusMsg += fmt.Sprintf(" (%d warnings)", len(reloadWarnings))
 		}
+		reloadDuration := time.Since(reloadStart)
+		if reloadDuration >= 500*time.Millisecond {
+			m.statusMsg += fmt.Sprintf(" in %s", formatReloadDuration(reloadDuration))
+		}
+		// Auto-enable background mode after slow sync reloads (opt-out via BV_BACKGROUND_MODE=0).
+		autoEnabled := false
+		slowReload := reloadDuration >= time.Second
+		if slowReload && m.backgroundWorker == nil && m.beadsPath != "" {
+			autoAllowed := true
+			if v := strings.TrimSpace(os.Getenv("BV_BACKGROUND_MODE")); v != "" {
+				switch strings.ToLower(v) {
+				case "0", "false", "no", "off":
+					autoAllowed = false
+				}
+			}
+			if autoAllowed {
+				bw, err := NewBackgroundWorker(WorkerConfig{
+					BeadsPath:     m.beadsPath,
+					DebounceDelay: 200 * time.Millisecond,
+				})
+				if err == nil {
+					if m.watcher != nil {
+						m.watcher.Stop()
+					}
+					m.watcher = nil
+					m.backgroundWorker = bw
+					m.snapshotInitPending = true
+					autoEnabled = true
+					cmds = append(cmds, StartBackgroundWorkerCmd(m.backgroundWorker))
+					cmds = append(cmds, WaitForBackgroundWorkerMsgCmd(m.backgroundWorker))
+				} else {
+					m.statusMsg += fmt.Sprintf("; background mode unavailable: %v", err)
+				}
+			}
+		}
+		if slowReload {
+			if autoEnabled {
+				m.statusMsg += "; background mode auto-enabled"
+			} else {
+				m.statusMsg += "; consider BV_BACKGROUND_MODE=1"
+			}
+		}
 		m.statusIsError = false
 		// Invalidate label-derived caches
 		m.labelHealthCached = false
@@ -2021,7 +2095,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateViewportContent()
 
 		// Re-start watching for next change + wait for Phase 2
-		if m.watcher != nil {
+		if m.watcher != nil && !autoEnabled {
 			cmds = append(cmds, WatchFileCmd(m.watcher))
 		}
 		cmds = append(cmds, WaitForPhase2Cmd(m.analysis))
@@ -2630,6 +2704,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.isHistoryView = false
 				if m.isBoardView {
 					m.focused = focusBoard
+					m.refreshBoardAndGraphForCurrentFilter()
 				} else {
 					m.focused = focusList
 				}
@@ -2644,6 +2719,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.isHistoryView = false
 				if m.isGraphView {
 					m.focused = focusGraph
+					m.refreshBoardAndGraphForCurrentFilter()
 				} else {
 					m.focused = focusList
 				}
@@ -5916,55 +5992,122 @@ func (m *Model) setActiveRecipe(r *recipe.Recipe) {
 	}
 }
 
+func (m *Model) matchesCurrentFilter(issue model.Issue) bool {
+	// Workspace repo filter (nil = all repos)
+	if m.workspaceMode && m.activeRepos != nil {
+		repoKey := strings.ToLower(ExtractRepoPrefix(issue.ID))
+		if repoKey != "" && !m.activeRepos[repoKey] {
+			return false
+		}
+	}
+
+	switch m.currentFilter {
+	case "all":
+		return true
+	case "open":
+		return !isClosedLikeStatus(issue.Status)
+	case "closed":
+		return isClosedLikeStatus(issue.Status)
+	case "ready":
+		// Ready = Open/InProgress AND NO Open Blockers
+		if isClosedLikeStatus(issue.Status) || issue.Status == model.StatusBlocked {
+			return false
+		}
+		for _, dep := range issue.Dependencies {
+			if dep == nil || !dep.Type.IsBlocking() {
+				continue
+			}
+			if blocker, exists := m.issueMap[dep.DependsOnID]; exists && !isClosedLikeStatus(blocker.Status) {
+				return false
+			}
+		}
+		return true
+	default:
+		if strings.HasPrefix(m.currentFilter, "label:") {
+			label := strings.TrimPrefix(m.currentFilter, "label:")
+			for _, l := range issue.Labels {
+				if l == label {
+					return true
+				}
+			}
+		}
+		return false
+	}
+}
+
+func (m *Model) filteredIssuesForActiveView() []model.Issue {
+	filtered := make([]model.Issue, 0, len(m.issues))
+	recipeFilterActive := m.activeRecipe != nil && strings.HasPrefix(m.currentFilter, "recipe:")
+	if recipeFilterActive {
+		for _, issue := range m.issues {
+			if m.workspaceMode && m.activeRepos != nil {
+				repoKey := strings.ToLower(ExtractRepoPrefix(issue.ID))
+				if repoKey != "" && !m.activeRepos[repoKey] {
+					continue
+				}
+			}
+			if issueMatchesRecipe(issue, m.issueMap, m.activeRecipe) {
+				filtered = append(filtered, issue)
+			}
+		}
+		sortIssuesByRecipe(filtered, m.analysis, m.activeRecipe)
+		return filtered
+	}
+	for _, issue := range m.issues {
+		if m.matchesCurrentFilter(issue) {
+			filtered = append(filtered, issue)
+		}
+	}
+	return filtered
+}
+
+func (m *Model) refreshBoardAndGraphForCurrentFilter() {
+	if !m.isBoardView && !m.isGraphView {
+		return
+	}
+
+	filteredIssues := m.filteredIssuesForActiveView()
+	recipeFilterActive := m.activeRecipe != nil && strings.HasPrefix(m.currentFilter, "recipe:")
+	if m.isBoardView {
+		useSnapshot := m.snapshot != nil && m.snapshot.BoardState != nil && (!m.workspaceMode || m.activeRepos == nil) && len(filteredIssues) == len(m.snapshot.Issues)
+		if useSnapshot {
+			if recipeFilterActive {
+				useSnapshot = m.snapshot.RecipeName == m.activeRecipe.Name && m.snapshot.RecipeHash == recipeFingerprint(m.activeRecipe)
+			} else {
+				useSnapshot = m.currentFilter == "all"
+			}
+		}
+		if useSnapshot {
+			m.board.SetSnapshot(m.snapshot)
+		} else {
+			m.board.SetIssues(filteredIssues)
+		}
+	}
+
+	if m.isGraphView {
+		useSnapshot := m.snapshot != nil && m.snapshot.GraphLayout != nil && len(filteredIssues) == len(m.snapshot.Issues)
+		if useSnapshot {
+			if recipeFilterActive {
+				useSnapshot = m.snapshot.RecipeName == m.activeRecipe.Name && m.snapshot.RecipeHash == recipeFingerprint(m.activeRecipe)
+			} else {
+				useSnapshot = m.currentFilter == "all"
+			}
+		}
+		if useSnapshot {
+			m.graphView.SetSnapshot(m.snapshot)
+		} else {
+			filterIns := m.analysis.GenerateInsights(len(filteredIssues))
+			m.graphView.SetIssues(filteredIssues, &filterIns)
+		}
+	}
+}
+
 func (m *Model) applyFilter() {
 	var filteredItems []list.Item
 	var filteredIssues []model.Issue
 
 	for _, issue := range m.issues {
-		// Workspace repo filter (nil = all repos)
-		if m.workspaceMode && m.activeRepos != nil {
-			repoKey := strings.ToLower(ExtractRepoPrefix(issue.ID))
-			if repoKey != "" && !m.activeRepos[repoKey] {
-				continue
-			}
-		}
-
-		include := false
-		switch m.currentFilter {
-		case "all":
-			include = true
-		case "open":
-			include = !isClosedLikeStatus(issue.Status)
-		case "closed":
-			include = isClosedLikeStatus(issue.Status)
-		case "ready":
-			// Ready = Open/InProgress AND NO Open Blockers
-			if !isClosedLikeStatus(issue.Status) && issue.Status != model.StatusBlocked {
-				isBlocked := false
-				for _, dep := range issue.Dependencies {
-					if dep == nil || !dep.Type.IsBlocking() {
-						continue
-					}
-					if blocker, exists := m.issueMap[dep.DependsOnID]; exists && !isClosedLikeStatus(blocker.Status) {
-						isBlocked = true
-						break
-					}
-				}
-				include = !isBlocked
-			}
-		default:
-			if strings.HasPrefix(m.currentFilter, "label:") {
-				label := strings.TrimPrefix(m.currentFilter, "label:")
-				for _, l := range issue.Labels {
-					if l == label {
-						include = true
-						break
-					}
-				}
-			}
-		}
-
-		if include {
+		if m.matchesCurrentFilter(issue) {
 			// Use pre-computed graph scores (avoid redundant calculation)
 			item := IssueItem{
 				Issue:      issue,
@@ -7542,6 +7685,10 @@ func (m *Model) Stop() {
 	if m.instanceLock != nil {
 		m.instanceLock.Release()
 	}
+	if len(m.pooledIssues) > 0 {
+		loader.ReturnIssuePtrsToPool(m.pooledIssues)
+		m.pooledIssues = nil
+	}
 }
 
 // clearAttentionOverlay hides the attention overlay and clears its rendered text.
@@ -7751,4 +7898,14 @@ func (m *Model) RenderDebugView(viewName string, width, height int) string {
 	default:
 		return "Unknown view: " + viewName
 	}
+}
+
+func formatReloadDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return fmt.Sprintf("%dm", int(d.Minutes()))
 }
