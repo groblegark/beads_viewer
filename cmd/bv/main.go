@@ -2903,7 +2903,7 @@ func main() {
 			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 			DataHash:    dataHash,
 			IssueCount:  len(issues),
-			Version:     "1.0.0",
+			Version:     version.Version,
 			Files:       []string{"triage.json", "insights.json", "brief.md", "helpers.md", "meta.json"},
 		}
 		metaJSON, _ := json.MarshalIndent(meta, "", "  ")

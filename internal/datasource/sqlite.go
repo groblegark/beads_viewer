@@ -180,6 +180,9 @@ func (r *SQLiteReader) LoadIssuesFiltered(filter func(*model.Issue) bool) ([]mod
 
 		issues = append(issues, issue)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating issues: %w", err)
+	}
 
 	return issues, nil
 }
@@ -231,6 +234,9 @@ func (r *SQLiteReader) loadIssuesSimple(filter func(*model.Issue) bool) ([]model
 
 		issues = append(issues, issue)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating issues: %w", err)
+	}
 
 	return issues, nil
 }
@@ -255,6 +261,8 @@ func (r *SQLiteReader) loadDependencies(issueID string) []*model.Dependency {
 		dep.Type = model.DependencyType(depType)
 		deps = append(deps, &dep)
 	}
+	// Note: rows.Err() not checked here since loadDependencies is a
+	// best-effort helper that returns nil on any error.
 	return deps
 }
 
@@ -280,6 +288,8 @@ func (r *SQLiteReader) loadComments(issueID string) []*model.Comment {
 		comment.IssueID = issueID
 		comments = append(comments, &comment)
 	}
+	// Note: rows.Err() not checked here since loadComments is a
+	// best-effort helper that returns nil on any error.
 	return comments
 }
 
