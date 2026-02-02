@@ -57,6 +57,7 @@ func main() {
 	yesFlag := flag.Bool("yes", false, "Skip confirmation prompts (use with --update)")
 	exportFile := flag.String("export-md", "", "Export issues to a Markdown file (e.g., report.md)")
 	robotHelp := flag.Bool("robot-help", false, "Show AI agent help")
+	robotDocs := flag.String("robot-docs", "", "Machine-readable JSON docs for AI agents. Topics: guide, commands, examples, env, exit-codes, all")
 	outputFormat := flag.String("format", "", "Structured output format for --robot-* commands: json or toon (env: BV_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT)")
 	toonStats := flag.Bool("stats", false, "Show JSON vs TOON token estimates on stderr (env: TOON_STATS=1)")
 	robotInsights := flag.Bool("robot-insights", false, "Output graph analysis and insights as JSON for AI agents")
@@ -281,6 +282,7 @@ func main() {
 		*robotByLabel != "" ||
 		*robotByAssignee != "" ||
 		*robotCapacity ||
+		*robotDocs != "" ||
 		// When stdout is non-TTY, --diff-since auto-enables JSON output. Mark this
 		// as robot mode early so parsers keep stdout JSON clean.
 		(*diffSince != "" && !stdoutIsTTY)
@@ -1008,6 +1010,17 @@ func main() {
 		encoder := newRobotEncoder(os.Stdout)
 		if err := encoder.Encode(schemas); err != nil {
 			fmt.Fprintf(os.Stderr, "Error encoding schemas: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	// Machine-readable robot docs (bd-2v50)
+	if *robotDocs != "" {
+		docs := generateRobotDocs(*robotDocs)
+		encoder := newRobotEncoder(os.Stdout)
+		if err := encoder.Encode(docs); err != nil {
+			fmt.Fprintf(os.Stderr, "Error encoding robot-docs: %v\n", err)
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -6860,6 +6873,260 @@ func estimateTokens(s string) int {
 	}
 	// Coarse heuristic; good enough for comparing JSON vs TOON output size.
 	return (len(trimmed) + 3) / 4
+}
+
+// generateRobotDocs returns machine-readable documentation for AI agents (bd-2v50).
+// Topics: guide, commands, examples, env, exit-codes, all.
+func generateRobotDocs(topic string) map[string]interface{} {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result := map[string]interface{}{
+		"generated_at":  now,
+		"output_format": robotOutputFormat,
+		"version":       version.Version,
+		"topic":         topic,
+	}
+
+	guide := map[string]interface{}{
+		"description": "bv (Beads Viewer) provides structural analysis of the beads issue tracker DAG. It is the primary interface for AI agents to understand project state, plan work, and discover high-impact tasks.",
+		"quickstart": []string{
+			"bv --robot-triage               # Full triage with recommendations",
+			"bv --robot-next                  # Single top pick for immediate work",
+			"bv --robot-plan                  # Dependency-respecting execution plan",
+			"bv --robot-insights              # Deep graph analysis (PageRank, betweenness, etc.)",
+			"bv --robot-triage-by-track       # Parallel work streams for multi-agent coordination",
+			"bv --robot-schema                # JSON Schema definitions for all commands",
+		},
+		"data_source": ".beads/beads.jsonl (issues) and git history (correlations)",
+		"output_modes": map[string]string{
+			"json": "Default structured output",
+			"toon": "Token-optimized notation (saves ~30-50% tokens)",
+		},
+	}
+
+	type cmdDoc struct {
+		Flag        string   `json:"flag"`
+		Description string   `json:"description"`
+		KeyFields   []string `json:"key_fields,omitempty"`
+		Params      []string `json:"params,omitempty"`
+		NeedsIssues bool     `json:"needs_issues"`
+	}
+
+	commands := map[string]cmdDoc{
+		"robot-triage": {
+			Flag: "--robot-triage", Description: "Unified triage: top picks, recommendations, quick wins, blockers, project health, velocity.",
+			KeyFields: []string{"triage.quick_ref.top_picks", "triage.recommendations", "triage.quick_wins", "triage.blockers_to_clear", "triage.project_health"},
+			NeedsIssues: true,
+		},
+		"robot-next": {
+			Flag: "--robot-next", Description: "Single top recommendation with claim/show commands.",
+			KeyFields: []string{"id", "title", "score", "reasons", "unblocks", "claim_command", "show_command"},
+			NeedsIssues: true,
+		},
+		"robot-plan": {
+			Flag: "--robot-plan", Description: "Dependency-respecting execution plan with parallel tracks.",
+			KeyFields: []string{"tracks", "items", "unblocks", "summary"},
+			NeedsIssues: true,
+		},
+		"robot-insights": {
+			Flag: "--robot-insights", Description: "Deep graph analysis: PageRank, betweenness, HITS, eigenvector, k-core, cycle detection.",
+			KeyFields: []string{"pagerank", "betweenness", "hits", "eigenvector", "k_core", "cycles"},
+			NeedsIssues: true,
+		},
+		"robot-priority": {
+			Flag: "--robot-priority", Description: "Priority misalignment detection: items whose graph importance differs from assigned priority.",
+			KeyFields: []string{"misalignments", "suggestions"},
+			NeedsIssues: true,
+		},
+		"robot-triage-by-track": {
+			Flag: "--robot-triage-by-track", Description: "Triage grouped by independent parallel execution tracks.",
+			KeyFields: []string{"tracks[].track_id", "tracks[].top_pick", "tracks[].items"},
+			NeedsIssues: true,
+		},
+		"robot-triage-by-label": {
+			Flag: "--robot-triage-by-label", Description: "Triage grouped by label for area-focused agents.",
+			KeyFields: []string{"labels[].label", "labels[].top_pick", "labels[].items"},
+			NeedsIssues: true,
+		},
+		"robot-alerts": {
+			Flag: "--robot-alerts", Description: "Stale issues, blocking cascades, priority mismatches.",
+			KeyFields: []string{"alerts", "severity", "affected_issues"},
+			Params:  []string{"--severity info|warning|critical", "--alert-type <type>", "--alert-label <label>"},
+			NeedsIssues: true,
+		},
+		"robot-suggest": {
+			Flag: "--robot-suggest", Description: "Smart suggestions: potential duplicates, missing dependencies, label assignments, cycle warnings.",
+			KeyFields: []string{"suggestions", "type", "confidence"},
+			Params:  []string{"--suggest-type duplicate|dependency|label|cycle", "--suggest-confidence 0.0-1.0", "--suggest-bead <id>"},
+			NeedsIssues: true,
+		},
+		"robot-schema": {
+			Flag: "--robot-schema", Description: "JSON Schema definitions for all robot command outputs.",
+			KeyFields: []string{"schema_version", "envelope", "commands"},
+			Params:  []string{"--schema-command <cmd>"},
+			NeedsIssues: false,
+		},
+		"robot-docs": {
+			Flag: "--robot-docs <topic>", Description: "Machine-readable JSON documentation. Topics: guide, commands, examples, env, exit-codes, all.",
+			NeedsIssues: false,
+		},
+		"robot-history": {
+			Flag: "--robot-history", Description: "Bead-to-commit correlations from git history.",
+			KeyFields: []string{"correlations", "confidence", "commit_sha", "bead_id"},
+			Params:  []string{"--bead-history <id>", "--history-since <date>", "--history-limit <n>", "--min-confidence 0.0-1.0"},
+			NeedsIssues: true,
+		},
+		"robot-diff": {
+			Flag: "--robot-diff", Description: "Changes since a historical point (commit, branch, tag, or date).",
+			Params:  []string{"--diff-since <ref>"},
+			NeedsIssues: true,
+		},
+		"robot-search": {
+			Flag: "--robot-search", Description: "Semantic vector search over issue titles and descriptions.",
+			Params:  []string{"--search <query>", "--search-limit <n>", "--search-mode text|hybrid"},
+			NeedsIssues: true,
+		},
+		"robot-label-health": {
+			Flag: "--robot-label-health", Description: "Per-label health metrics: open/closed counts, velocity, staleness.",
+			NeedsIssues: true,
+		},
+		"robot-label-flow": {
+			Flag: "--robot-label-flow", Description: "Cross-label dependency flow analysis.",
+			NeedsIssues: true,
+		},
+		"robot-label-attention": {
+			Flag: "--robot-label-attention", Description: "Attention-ranked labels requiring focus.",
+			Params:  []string{"--attention-limit <n>"},
+			NeedsIssues: true,
+		},
+		"robot-graph": {
+			Flag: "--robot-graph", Description: "Dependency graph export in JSON, DOT, or Mermaid format.",
+			Params:  []string{"--graph-format json|dot|mermaid", "--graph-root <id>", "--graph-depth <n>"},
+			NeedsIssues: true,
+		},
+		"robot-metrics": {
+			Flag: "--robot-metrics", Description: "Performance metrics: timing, cache hit rates, memory usage.",
+			NeedsIssues: true,
+		},
+		"robot-orphans": {
+			Flag: "--robot-orphans", Description: "Orphan commit candidates that should be linked to beads.",
+			Params:  []string{"--orphans-min-score 0-100"},
+			NeedsIssues: true,
+		},
+		"robot-file-beads": {
+			Flag: "--robot-file-beads <path>", Description: "Beads that touched a specific file path.",
+			Params:  []string{"--file-beads-limit <n>"},
+			NeedsIssues: true,
+		},
+		"robot-file-hotspots": {
+			Flag: "--robot-file-hotspots", Description: "Files touched by the most beads.",
+			Params:  []string{"--hotspots-limit <n>"},
+			NeedsIssues: true,
+		},
+		"robot-file-relations": {
+			Flag: "--robot-file-relations <path>", Description: "Files that frequently co-change with a given file.",
+			Params:  []string{"--relations-threshold 0.0-1.0", "--relations-limit <n>"},
+			NeedsIssues: true,
+		},
+		"robot-related": {
+			Flag: "--robot-related <id>", Description: "Beads related to a specific bead ID.",
+			Params:  []string{"--related-min-relevance 0-100", "--related-max-results <n>", "--related-include-closed"},
+			NeedsIssues: true,
+		},
+		"robot-blocker-chain": {
+			Flag: "--robot-blocker-chain <id>", Description: "Full blocker chain analysis for an issue.",
+			NeedsIssues: true,
+		},
+		"robot-impact-network": {
+			Flag: "--robot-impact-network [<id>|all]", Description: "Impact network graph (full or subnetwork for a bead).",
+			Params:  []string{"--network-depth 1-3"},
+			NeedsIssues: true,
+		},
+		"robot-causality": {
+			Flag: "--robot-causality <id>", Description: "Causal chain analysis for a bead.",
+			NeedsIssues: true,
+		},
+		"robot-sprint-list": {
+			Flag: "--robot-sprint-list", Description: "List all sprints as JSON.",
+			NeedsIssues: true,
+		},
+		"robot-sprint-show": {
+			Flag: "--robot-sprint-show <id>", Description: "Show details for a specific sprint.",
+			NeedsIssues: true,
+		},
+		"robot-forecast": {
+			Flag: "--robot-forecast <id|all>", Description: "ETA predictions for bead completion.",
+			Params:  []string{"--forecast-label <label>", "--forecast-sprint <id>", "--forecast-agents <n>"},
+			NeedsIssues: true,
+		},
+		"robot-capacity": {
+			Flag: "--robot-capacity", Description: "Capacity simulation and completion projections.",
+			Params:  []string{"--agents <n>", "--capacity-label <label>"},
+			NeedsIssues: true,
+		},
+		"robot-burndown": {
+			Flag: "--robot-burndown <sprint|current>", Description: "Sprint burndown data.",
+			NeedsIssues: true,
+		},
+		"robot-drift": {
+			Flag: "--robot-drift", Description: "Drift detection from saved baseline.",
+			NeedsIssues: true,
+		},
+	}
+
+	examples := []map[string]string{
+		{"description": "Get top 3 picks for immediate work", "command": "bv --robot-triage | jq '.triage.quick_ref.top_picks[:3]'"},
+		{"description": "Claim the top recommendation", "command": "bv --robot-next | jq -r '.claim_command' | sh"},
+		{"description": "Find high-impact blockers to clear", "command": "bv --robot-triage | jq '.triage.blockers_to_clear | map(.id)'"},
+		{"description": "Get bug-only recommendations", "command": "bv --robot-triage | jq '.triage.recommendations[] | select(.type == \"bug\")'"},
+		{"description": "Multi-agent: top pick per parallel track", "command": "bv --robot-triage-by-track | jq '.triage.recommendations_by_track[].top_pick'"},
+		{"description": "Find beads related to a specific file", "command": "bv --robot-file-beads src/main.rs"},
+		{"description": "Search for issues by keyword", "command": "bv --search 'authentication' --robot-search"},
+		{"description": "Get TOON output (saves tokens)", "command": "bv --robot-triage --format toon"},
+		{"description": "Use env for default format", "command": "BV_OUTPUT_FORMAT=toon bv --robot-triage"},
+		{"description": "Show token savings estimate", "command": "bv --robot-triage --format toon --stats"},
+	}
+
+	envVars := map[string]string{
+		"BV_OUTPUT_FORMAT":    "Default output format: json or toon (overridden by --format)",
+		"TOON_DEFAULT_FORMAT": "Fallback format if BV_OUTPUT_FORMAT not set",
+		"TOON_STATS":          "Set to 1 to show JSON vs TOON token estimates on stderr",
+		"TOON_KEY_FOLDING":    "TOON key folding mode",
+		"TOON_INDENT":         "TOON indentation level (0-16)",
+		"BV_PRETTY_JSON":      "Set to 1 for indented JSON output",
+		"BV_ROBOT":            "Set to 1 to force robot mode (clean stdout)",
+		"BV_SEARCH_MODE":      "Search mode: text or hybrid",
+		"BV_SEARCH_PRESET":    "Hybrid search preset name",
+	}
+
+	exitCodes := map[string]string{
+		"0": "Success",
+		"1": "Error (general failure, drift critical)",
+		"2": "Invalid arguments or drift warning",
+	}
+
+	switch topic {
+	case "guide":
+		result["guide"] = guide
+	case "commands":
+		result["commands"] = commands
+	case "examples":
+		result["examples"] = examples
+	case "env":
+		result["environment_variables"] = envVars
+	case "exit-codes":
+		result["exit_codes"] = exitCodes
+	case "all":
+		result["guide"] = guide
+		result["commands"] = commands
+		result["examples"] = examples
+		result["environment_variables"] = envVars
+		result["exit_codes"] = exitCodes
+	default:
+		result["error"] = "Unknown topic: " + topic
+		result["available_topics"] = []string{"guide", "commands", "examples", "env", "exit-codes", "all"}
+	}
+
+	return result
 }
 
 // RobotSchemas holds JSON Schema definitions for all robot commands
