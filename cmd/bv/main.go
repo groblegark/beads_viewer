@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"io"
 	"os"
 	"os/exec"
@@ -5639,7 +5640,8 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-// copyFileWithTitleReplacement copies a file while replacing the default title.
+// copyFileWithTitleAndCacheBusting copies a file while replacing the default title
+// and adding cache-busting query parameters to script tags.
 func copyFileWithTitleAndCacheBusting(src, dst, title string) error {
 	content, err := os.ReadFile(src)
 	if err != nil {
@@ -5650,8 +5652,9 @@ func copyFileWithTitleAndCacheBusting(src, dst, title string) error {
 
 	// Replace title in <title> tag and in the h1 header (if title provided)
 	if title != "" {
-		result = strings.Replace(result, "<title>Beads Viewer</title>", "<title>"+title+"</title>", 1)
-		result = strings.Replace(result, `<h1 class="text-xl font-semibold">Beads Viewer</h1>`, `<h1 class="text-xl font-semibold">`+title+`</h1>`, 1)
+		safeTitle := html.EscapeString(title)
+		result = strings.Replace(result, "<title>Beads Viewer</title>", "<title>"+safeTitle+"</title>", 1)
+		result = strings.Replace(result, `<h1 class="text-xl font-semibold">Beads Viewer</h1>`, `<h1 class="text-xl font-semibold">`+safeTitle+`</h1>`, 1)
 	}
 
 	// Always add cache-busting to script tags to prevent CDN from serving stale JS files

@@ -466,11 +466,16 @@ async function cleanStaleOPFS(currentCacheKey) {
   try {
     const root = await navigator.storage.getDirectory();
     const currentFile = `beads-${currentCacheKey}.sqlite3`;
+    // Collect stale names first to avoid mutating directory during iteration
+    const stale = [];
     for await (const [name] of root.entries()) {
       if (name.startsWith('beads-') && name.endsWith('.sqlite3') && name !== currentFile) {
-        await root.removeEntry(name);
-        console.log(`[OPFS] Removed stale cache: ${name}`);
+        stale.push(name);
       }
+    }
+    for (const name of stale) {
+      await root.removeEntry(name);
+      console.log(`[OPFS] Removed stale cache: ${name}`);
     }
   } catch (err) {
     // Non-critical; ignore cleanup failures
@@ -616,10 +621,11 @@ async function loadDatabase(updateStatus) {
     throw err;
   }
 
-  // Cache for next time
+  // Cache for next time and clean up stale entries (e.g., legacy "default" key)
   if (DB_STATE.cacheKey) {
     updateStatus?.('Caching for offline...');
     await cacheToOPFS(DB_STATE.db.export(), DB_STATE.cacheKey);
+    cleanStaleOPFS(DB_STATE.cacheKey).catch(() => {});
   }
 
   return DB_STATE.db;

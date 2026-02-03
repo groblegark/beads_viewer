@@ -528,7 +528,7 @@ func (e *SQLiteExporter) chunkIfNeeded(outputDir, dbPath string) error {
 	// Without this, all deployments use the same "default" cache key and old data persists.
 	f, err := os.Open(dbPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("open database for hashing: %w", err)
 	}
 
 	hasher := sha256.New()
@@ -547,7 +547,7 @@ func (e *SQLiteExporter) chunkIfNeeded(outputDir, dbPath string) error {
 	// Reset file position for chunking
 	if _, err := f.Seek(0, 0); err != nil {
 		f.Close()
-		return err
+		return fmt.Errorf("seek database for chunking: %w", err)
 	}
 
 	// Chunk the database (file f is already open and seeked to start)
