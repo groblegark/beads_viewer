@@ -107,6 +107,7 @@ func main() {
 	profileJSON := flag.Bool("profile-json", false, "Output profile in JSON format (use with --profile-startup)")
 	noHooks := flag.Bool("no-hooks", false, "Skip running hooks during export")
 	workspaceConfig := flag.String("workspace", "", "Load issues from workspace config file (.bv/workspace.yaml)")
+	beadsURL := flag.String("beads-url", "", "Load issues from Gas Town daemon URL (e.g., http://localhost:8443)")
 	repoFilter := flag.String("repo", "", "Filter issues by repository prefix (e.g., 'api-' or 'api')")
 	saveBaseline := flag.String("save-baseline", "", "Save current metrics as baseline with optional description")
 	baselineInfo := flag.Bool("baseline-info", false, "Show information about the current baseline")
@@ -214,6 +215,13 @@ func main() {
 	_ = capacityLabel
 	_ = labelScope
 	_ = agentBrief
+
+	// BV_BEADS_URL env var fallback for --beads-url
+	if *beadsURL == "" {
+		if envURL := os.Getenv("BV_BEADS_URL"); envURL != "" {
+			*beadsURL = envURL
+		}
+	}
 
 	envRobot := os.Getenv("BV_ROBOT") == "1"
 	stdoutIsTTY := term.IsTerminal(int(os.Stdout.Fd()))
@@ -1015,6 +1023,17 @@ func main() {
 		// Workspace config is typically at .bv/workspace.yaml, so project root is two levels up
 		workspaceRoot := filepath.Dir(filepath.Dir(*workspaceConfig))
 		_ = loader.EnsureBVInGitignore(workspaceRoot)
+	} else if *beadsURL != "" {
+		// Load from Gas Town daemon via ConnectRPC
+		ctx, cancel := context.WithTimeout(context.Background(), loader.DefaultHTTPTimeout)
+		var err error
+		issues, err = loader.LoadIssuesFromURL(ctx, *beadsURL, loader.ParseOptions{})
+		cancel()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading beads from %s: %v\n", *beadsURL, err)
+			os.Exit(1)
+		}
+		beadsPath = "" // no file-based live reload
 	} else {
 		// Load from single repo (original behavior)
 		var err error
