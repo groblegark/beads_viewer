@@ -159,7 +159,7 @@ func TestLoadIssuesFromURLEndToEnd(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
-		if r.URL.Path != "/gastown.v1.BeadsService/ListIssues" {
+		if r.URL.Path != "/bd.v1.BeadsService/List" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
@@ -170,7 +170,7 @@ func TestLoadIssuesFromURLEndToEnd(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	issues, err := loadIssuesFromURL(context.Background(), srv.URL, ParseOptions{}, srv.Client())
+	issues, err := loadIssuesFromURL(context.Background(), srv.URL, "", ParseOptions{}, srv.Client())
 	if err != nil {
 		t.Fatalf("LoadIssuesFromURL() error: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestLoadIssuesFromURLHTTPError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := loadIssuesFromURL(context.Background(), srv.URL, ParseOptions{}, srv.Client())
+	_, err := loadIssuesFromURL(context.Background(), srv.URL, "", ParseOptions{}, srv.Client())
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
@@ -235,7 +235,7 @@ func TestLoadIssuesFromURLHTTPError(t *testing.T) {
 }
 
 func TestLoadIssuesFromURLConnectionRefused(t *testing.T) {
-	_, err := loadIssuesFromURL(context.Background(), "http://127.0.0.1:1", ParseOptions{}, &http.Client{Timeout: time.Second})
+	_, err := loadIssuesFromURL(context.Background(), "http://127.0.0.1:1", "", ParseOptions{}, &http.Client{Timeout: time.Second})
 	if err == nil {
 		t.Fatal("expected error for connection refused")
 	}
@@ -248,7 +248,7 @@ func TestLoadIssuesFromURLInvalidJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := loadIssuesFromURL(context.Background(), srv.URL, ParseOptions{}, srv.Client())
+	_, err := loadIssuesFromURL(context.Background(), srv.URL, "", ParseOptions{}, srv.Client())
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
@@ -291,7 +291,7 @@ func TestLoadIssuesFromURLFilter(t *testing.T) {
 			return i.Status == model.StatusOpen
 		},
 	}
-	issues, err := loadIssuesFromURL(context.Background(), srv.URL, opts, srv.Client())
+	issues, err := loadIssuesFromURL(context.Background(), srv.URL, "", opts, srv.Client())
 	if err != nil {
 		t.Fatalf("LoadIssuesFromURL() error: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestLoadIssuesFromURLFilter(t *testing.T) {
 
 func TestLoadIssuesFromURLTrailingSlash(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/gastown.v1.BeadsService/ListIssues" {
+		if r.URL.Path != "/bd.v1.BeadsService/List" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -315,12 +315,40 @@ func TestLoadIssuesFromURLTrailingSlash(t *testing.T) {
 	defer srv.Close()
 
 	// URL with trailing slash should still work
-	issues, err := loadIssuesFromURL(context.Background(), srv.URL+"/", ParseOptions{}, srv.Client())
+	issues, err := loadIssuesFromURL(context.Background(), srv.URL+"/", "", ParseOptions{}, srv.Client())
 	if err != nil {
 		t.Fatalf("LoadIssuesFromURL() error: %v", err)
 	}
 	if len(issues) != 0 {
 		t.Errorf("expected 0 issues, got %d", len(issues))
+	}
+}
+
+func TestLoadIssuesFromURLAPIKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer test-secret" {
+			http.Error(w, `{"error":"invalid API key"}`, http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"issues":[{"id":"bv-99","title":"Authed issue","status":"ISSUE_STATUS_OPEN","type":"ISSUE_TYPE_TASK","createdAt":"2024-01-01T00:00:00Z","updatedAt":"2024-01-02T00:00:00Z"}],"total":1}`))
+	}))
+	defer srv.Close()
+
+	// Without key → should fail
+	_, err := loadIssuesFromURL(context.Background(), srv.URL, "", ParseOptions{}, srv.Client())
+	if err == nil {
+		t.Fatal("expected error without API key")
+	}
+
+	// With key → should succeed
+	issues, err := loadIssuesFromURL(context.Background(), srv.URL, "test-secret", ParseOptions{}, srv.Client())
+	if err != nil {
+		t.Fatalf("expected success with API key, got: %v", err)
+	}
+	if len(issues) != 1 || issues[0].ID != "bv-99" {
+		t.Errorf("unexpected issues: %+v", issues)
 	}
 }
 

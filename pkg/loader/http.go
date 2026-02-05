@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -16,6 +17,12 @@ import (
 
 // DefaultHTTPTimeout is the default timeout for HTTP requests to the daemon.
 const DefaultHTTPTimeout = 30 * time.Second
+
+// defaultServicePath is the ConnectRPC service path for the beads daemon.
+const defaultServicePath = "/bd.v1.BeadsService/List"
+
+// apiKeyEnvVar is the environment variable for the daemon API key/token.
+const apiKeyEnvVar = "BD_API_KEY"
 
 // protoIssue mirrors the ConnectRPC JSON response shape (camelCase).
 type protoIssue struct {
@@ -181,14 +188,23 @@ func toModelIssue(p *protoIssue) (model.Issue, error) {
 
 // LoadIssuesFromURL loads issues from a Gas Town daemon via ConnectRPC over HTTP.
 // The baseURL should be the daemon address (e.g., "http://localhost:8443").
-func LoadIssuesFromURL(ctx context.Context, baseURL string, opts ParseOptions) ([]model.Issue, error) {
-	return loadIssuesFromURL(ctx, baseURL, opts, http.DefaultClient)
+// The apiKey is sent as X-GT-API-Key header; if empty, falls back to BD_API_KEY env var.
+func LoadIssuesFromURL(ctx context.Context, baseURL, apiKey string, opts ParseOptions) ([]model.Issue, error) {
+	return loadIssuesFromURL(ctx, baseURL, apiKey, opts, http.DefaultClient)
 }
 
 // loadIssuesFromURL is the internal implementation that accepts an *http.Client for testability.
-func loadIssuesFromURL(ctx context.Context, baseURL string, opts ParseOptions, client *http.Client) ([]model.Issue, error) {
+func loadIssuesFromURL(ctx context.Context, baseURL, apiKey string, opts ParseOptions, client *http.Client) ([]model.Issue, error) {
+	// Resolve API key: explicit > BD_API_KEY > BD_DAEMON_TOKEN env var
+	if apiKey == "" {
+		apiKey = os.Getenv(apiKeyEnvVar)
+	}
+	if apiKey == "" {
+		apiKey = os.Getenv("BD_DAEMON_TOKEN")
+	}
+
 	baseURL = strings.TrimRight(baseURL, "/")
-	endpoint := baseURL + "/gastown.v1.BeadsService/ListIssues"
+	endpoint := baseURL + defaultServicePath
 
 	body := []byte(`{"status":"","limit":0}`)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
@@ -196,6 +212,9 @@ func loadIssuesFromURL(ctx context.Context, baseURL string, opts ParseOptions, c
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {

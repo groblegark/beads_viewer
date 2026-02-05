@@ -108,6 +108,7 @@ func main() {
 	noHooks := flag.Bool("no-hooks", false, "Skip running hooks during export")
 	workspaceConfig := flag.String("workspace", "", "Load issues from workspace config file (.bv/workspace.yaml)")
 	beadsURL := flag.String("beads-url", "", "Load issues from Gas Town daemon URL (e.g., http://localhost:8443)")
+	beadsAPIKey := flag.String("beads-api-key", "", "API key for daemon authentication (or set BD_API_KEY)")
 	repoFilter := flag.String("repo", "", "Filter issues by repository prefix (e.g., 'api-' or 'api')")
 	saveBaseline := flag.String("save-baseline", "", "Save current metrics as baseline with optional description")
 	baselineInfo := flag.Bool("baseline-info", false, "Show information about the current baseline")
@@ -216,9 +217,11 @@ func main() {
 	_ = labelScope
 	_ = agentBrief
 
-	// BV_BEADS_URL env var fallback for --beads-url
+	// Env var fallback for --beads-url: BV_BEADS_URL, then BD_DAEMON_HOST
 	if *beadsURL == "" {
 		if envURL := os.Getenv("BV_BEADS_URL"); envURL != "" {
+			*beadsURL = envURL
+		} else if envURL := os.Getenv("BD_DAEMON_HOST"); envURL != "" {
 			*beadsURL = envURL
 		}
 	}
@@ -1027,7 +1030,7 @@ func main() {
 		// Load from Gas Town daemon via ConnectRPC
 		ctx, cancel := context.WithTimeout(context.Background(), loader.DefaultHTTPTimeout)
 		var err error
-		issues, err = loader.LoadIssuesFromURL(ctx, *beadsURL, loader.ParseOptions{})
+		issues, err = loader.LoadIssuesFromURL(ctx, *beadsURL, *beadsAPIKey, loader.ParseOptions{})
 		cancel()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading beads from %s: %v\n", *beadsURL, err)
