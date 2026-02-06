@@ -16,7 +16,8 @@ import (
 )
 
 // DefaultHTTPTimeout is the default timeout for HTTP requests to the daemon.
-const DefaultHTTPTimeout = 30 * time.Second
+// Set higher due to load balancer warmup issues.
+const DefaultHTTPTimeout = 90 * time.Second
 
 // defaultServicePath is the ConnectRPC service path for the beads daemon.
 const defaultServicePath = "/bd.v1.BeadsService/List"
@@ -24,27 +25,28 @@ const defaultServicePath = "/bd.v1.BeadsService/List"
 // apiKeyEnvVar is the environment variable for the daemon API key/token.
 const apiKeyEnvVar = "BD_API_KEY"
 
-// protoIssue mirrors the ConnectRPC JSON response shape (camelCase).
+// protoIssue mirrors the daemon JSON response shape.
+// Uses snake_case to match the actual daemon response format.
 type protoIssue struct {
 	ID          string   `json:"id"`
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
 	Status      string   `json:"status"`
-	Type        string   `json:"type"`
+	Type        string   `json:"issue_type"` // daemon uses issue_type
 	Priority    int      `json:"priority"`
-	CreatedAt   string   `json:"createdAt"`
-	UpdatedAt   string   `json:"updatedAt"`
-	ClosedAt    string   `json:"closedAt"`
+	CreatedAt   string   `json:"created_at"`
+	UpdatedAt   string   `json:"updated_at"`
+	ClosedAt    string   `json:"closed_at"`
 	Parent      string   `json:"parent"`
 	Assignee    string   `json:"assignee"`
-	CreatedBy   string   `json:"createdBy"`
+	CreatedBy   string   `json:"created_by"`
 	Labels      []string `json:"labels"`
 	Children    []string `json:"children"`
-	DependsOn   []string `json:"dependsOn"`
+	DependsOn   []string `json:"depends_on"`
 	Blocks      []string `json:"blocks"`
-	BlockedBy   []string `json:"blockedBy"`
-	HookBead    string   `json:"hookBead"`
-	AgentState  string   `json:"agentState"`
+	BlockedBy   []string `json:"blocked_by"`
+	HookBead    string   `json:"hook_bead"`
+	AgentState  string   `json:"agent_state"`
 }
 
 type listIssuesResponse struct {
@@ -216,9 +218,42 @@ func loadIssuesFromURL(ctx context.Context, baseURL, apiKey string, opts ParseOp
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request to %s failed: %w", endpoint, err)
+	// Retry logic: the daemon's load balancer can be flaky on first request
+	var resp *http.Response
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 1s, 2s
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("HTTP request to %s failed after %d attempts: %w", endpoint, attempt, lastErr)
+			case <-time.After(time.Duration(attempt) * time.Second):
+			}
+			// Recreate request for retry (body reader is consumed)
+			req, _ = http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			if apiKey != "" {
+				req.Header.Set("Authorization", "Bearer "+apiKey)
+			}
+		}
+
+		resp, lastErr = client.Do(req)
+		if lastErr == nil && resp.StatusCode == http.StatusOK {
+			break
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+		// Retry on timeout, connection errors, or 502/503
+		if lastErr != nil || resp.StatusCode == 502 || resp.StatusCode == 503 {
+			continue
+		}
+		// Non-retryable error
+		break
+	}
+
+	if lastErr != nil {
+		return nil, fmt.Errorf("HTTP request to %s failed: %w", endpoint, lastErr)
 	}
 	defer resp.Body.Close()
 
@@ -232,9 +267,18 @@ func loadIssuesFromURL(ctx context.Context, baseURL, apiKey string, opts ParseOp
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	var listResp listIssuesResponse
-	if err := json.Unmarshal(respBody, &listResp); err != nil {
-		return nil, fmt.Errorf("failed to parse response JSON: %w", err)
+	// The daemon may return either:
+	// 1. A flat array: [{...}, {...}]
+	// 2. A wrapped response: {issues: [...], total: N}
+	// Try flat array first (current daemon behavior), fall back to wrapped.
+	var protoIssues []protoIssue
+	if err := json.Unmarshal(respBody, &protoIssues); err != nil {
+		// Try wrapped format
+		var listResp listIssuesResponse
+		if err2 := json.Unmarshal(respBody, &listResp); err2 != nil {
+			return nil, fmt.Errorf("failed to parse response JSON: %w (also tried wrapped: %v)", err, err2)
+		}
+		protoIssues = listResp.Issues
 	}
 
 	warn := opts.WarningHandler
@@ -244,9 +288,9 @@ func loadIssuesFromURL(ctx context.Context, baseURL, apiKey string, opts ParseOp
 		}
 	}
 
-	issues := make([]model.Issue, 0, len(listResp.Issues))
-	for i := range listResp.Issues {
-		issue, err := toModelIssue(&listResp.Issues[i])
+	issues := make([]model.Issue, 0, len(protoIssues))
+	for i := range protoIssues {
+		issue, err := toModelIssue(&protoIssues[i])
 		if err != nil {
 			warn(fmt.Sprintf("skipping issue: %v", err))
 			continue

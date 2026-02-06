@@ -127,32 +127,30 @@ func TestLoadIssuesFromURLEndToEnd(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	closedAt := now.Add(-time.Hour)
 
-	response := listIssuesResponse{
-		Issues: []protoIssue{
-			{
-				ID:        "bv-10",
-				Title:     "Open task",
-				Status:    "ISSUE_STATUS_OPEN",
-				Type:      "ISSUE_TYPE_TASK",
-				Priority:  2,
-				CreatedAt: now.Add(-24 * time.Hour).Format(time.RFC3339),
-				UpdatedAt: now.Format(time.RFC3339),
-				Assignee:  "alice",
-				Labels:    []string{"backend", "urgent"},
-				DependsOn: []string{"bv-11"},
-			},
-			{
-				ID:        "bv-11",
-				Title:     "Closed bug",
-				Status:    "ISSUE_STATUS_CLOSED",
-				Type:      "ISSUE_TYPE_BUG",
-				Priority:  1,
-				CreatedAt: now.Add(-48 * time.Hour).Format(time.RFC3339),
-				UpdatedAt: now.Add(-time.Hour).Format(time.RFC3339),
-				ClosedAt:  closedAt.Format(time.RFC3339),
-			},
+	// Use flat array format with lowercase status/type (matches daemon)
+	response := []protoIssue{
+		{
+			ID:        "bv-10",
+			Title:     "Open task",
+			Status:    "open",
+			Type:      "task",
+			Priority:  2,
+			CreatedAt: now.Add(-24 * time.Hour).Format(time.RFC3339),
+			UpdatedAt: now.Format(time.RFC3339),
+			Assignee:  "alice",
+			Labels:    []string{"backend", "urgent"},
+			DependsOn: []string{"bv-11"},
 		},
-		Total: 2,
+		{
+			ID:        "bv-11",
+			Title:     "Closed bug",
+			Status:    "closed",
+			Type:      "bug",
+			Priority:  1,
+			CreatedAt: now.Add(-48 * time.Hour).Format(time.RFC3339),
+			UpdatedAt: now.Add(-time.Hour).Format(time.RFC3339),
+			ClosedAt:  closedAt.Format(time.RFC3339),
+		},
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -258,26 +256,23 @@ func TestLoadIssuesFromURLInvalidJSON(t *testing.T) {
 }
 
 func TestLoadIssuesFromURLFilter(t *testing.T) {
-	response := listIssuesResponse{
-		Issues: []protoIssue{
-			{
-				ID:        "bv-20",
-				Title:     "Keep me",
-				Status:    "ISSUE_STATUS_OPEN",
-				Type:      "ISSUE_TYPE_TASK",
-				CreatedAt: "2024-01-01T00:00:00Z",
-				UpdatedAt: "2024-01-02T00:00:00Z",
-			},
-			{
-				ID:        "bv-21",
-				Title:     "Filter me",
-				Status:    "ISSUE_STATUS_CLOSED",
-				Type:      "ISSUE_TYPE_BUG",
-				CreatedAt: "2024-01-01T00:00:00Z",
-				UpdatedAt: "2024-01-02T00:00:00Z",
-			},
+	response := []protoIssue{
+		{
+			ID:        "bv-20",
+			Title:     "Keep me",
+			Status:    "open",
+			Type:      "task",
+			CreatedAt: "2024-01-01T00:00:00Z",
+			UpdatedAt: "2024-01-02T00:00:00Z",
 		},
-		Total: 2,
+		{
+			ID:        "bv-21",
+			Title:     "Filter me",
+			Status:    "closed",
+			Type:      "bug",
+			CreatedAt: "2024-01-01T00:00:00Z",
+			UpdatedAt: "2024-01-02T00:00:00Z",
+		},
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -310,7 +305,7 @@ func TestLoadIssuesFromURLTrailingSlash(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"issues":[],"total":0}`))
+		w.Write([]byte(`[]`))
 	}))
 	defer srv.Close()
 
@@ -332,7 +327,7 @@ func TestLoadIssuesFromURLAPIKey(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"issues":[{"id":"bv-99","title":"Authed issue","status":"ISSUE_STATUS_OPEN","type":"ISSUE_TYPE_TASK","createdAt":"2024-01-01T00:00:00Z","updatedAt":"2024-01-02T00:00:00Z"}],"total":1}`))
+		w.Write([]byte(`[{"id":"bv-99","title":"Authed issue","status":"open","issue_type":"task","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z"}]`))
 	}))
 	defer srv.Close()
 
