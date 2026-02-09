@@ -1,0 +1,21 @@
+name: Auto Release Notes
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate release notes if body is empty
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BODY=$(gh release view "${{ github.event.release.tag_name }}" --json body -q .body)
+          if [ -z "$BODY" ] || [ ${#BODY} -lt 10 ]; then
+            gh release edit "${{ github.event.release.tag_name }}" --generate-notes
+          fi

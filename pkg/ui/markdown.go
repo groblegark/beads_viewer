@@ -175,15 +175,17 @@ func buildStyleFromTheme(theme Theme, isDark bool) ansi.StyleConfig {
 	mutedColor := extractHex(theme.Muted, isDark)
 	blockedColor := extractHex(theme.Blocked, isDark)
 
-	// Base document style - Dracula dark background or transparent for light mode
-	var docBgPtr *string
+	// Base document style - use terminal default background for both modes.
+	// Previously dark mode set an explicit Dracula background (#282a36), but
+	// terminals that remap ANSI color slots (e.g., Solarized Dark) could
+	// render it as vivid green (ANSI #2) when the hex value is downconverted
+	// to the 16-color palette. Using nil lets the terminal's own background
+	// show through, which is correct for every theme. (fixes #101)
+	var docBgPtr *string // nil = terminal default background
 	var docFg string
 	if isDark {
-		docBg := "#282a36"
-		docBgPtr = &docBg
 		docFg = "#f8f8f2"
 	} else {
-		docBgPtr = nil // No background for light mode (use terminal default)
 		docFg = "#000000"
 	}
 
