@@ -386,7 +386,7 @@ func main() {
 		fmt.Println("  --emit-script [--script-limit=N]")
 		fmt.Println("      Emits a shell script for top-N recommendations (default: 5).")
 		fmt.Println("      Includes hash/config header for deterministic ordering.")
-		fmt.Println("      Output: bd show commands for each item, commented claim commands")
+		fmt.Println("      Output: br show commands for each item, commented claim commands")
 		fmt.Println("      Options: --script-format=bash|fish|zsh, --script-limit=N")
 		fmt.Println("      Example: bv --emit-script > work.sh && bash work.sh")
 		fmt.Println("      Example: bv --emit-script --script-limit=3")
@@ -532,8 +532,8 @@ func main() {
 		fmt.Println("      Useful for agent workflows and automation.")
 		fmt.Println("      Output includes:")
 		fmt.Println("        - Header comment with data hash and generation time")
-		fmt.Println("        - bd show commands for each recommended item")
-		fmt.Println("        - Commented bd update commands to claim items")
+		fmt.Println("        - br show commands for each recommended item")
+		fmt.Println("        - Commented br update commands to claim items")
 		fmt.Println("      Options:")
 		fmt.Println("        --script-limit=N      Number of items (default: 5)")
 		fmt.Println("        --script-format=X     Script format: bash, fish, zsh")
@@ -4656,7 +4656,7 @@ func main() {
 	}
 
 	if len(issues) == 0 {
-		fmt.Println("No issues found. Create some with 'bd create'!")
+		fmt.Println("No issues found. Create some with 'br create'!")
 		os.Exit(0)
 	}
 

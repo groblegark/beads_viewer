@@ -68,8 +68,8 @@ func TestComputeTriage_BasicIssues(t *testing.T) {
 	}
 
 	// Commands should be populated
-	if triage.Commands.ListReady != "CI=1 bd ready --json" {
-		t.Errorf("expected 'CI=1 bd ready --json' command, got %s", triage.Commands.ListReady)
+	if triage.Commands.ListReady != "CI=1 br ready --json" {
+		t.Errorf("expected 'CI=1 br ready --json' command, got %s", triage.Commands.ListReady)
 	}
 }
 
@@ -355,7 +355,7 @@ func TestTriageEmptyCommands(t *testing.T) {
 
 	triage := ComputeTriage(issues)
 
-	if triage.Commands.ClaimTop != "CI=1 bd ready --json  # No top pick available" {
+	if triage.Commands.ClaimTop != "CI=1 br ready --json  # No top pick available" {
 		t.Errorf("unexpected ClaimTop fallback: %q", triage.Commands.ClaimTop)
 	}
 }
@@ -365,10 +365,10 @@ func TestTriageNoRecommendationsCommands(t *testing.T) {
 	triage := ComputeTriage(nil)
 
 	// Commands should be valid even with no recommendations
-	if triage.Commands.ListReady != "CI=1 bd ready --json" {
-		t.Errorf("expected 'CI=1 bd ready --json', got %s", triage.Commands.ListReady)
+	if triage.Commands.ListReady != "CI=1 br ready --json" {
+		t.Errorf("expected 'CI=1 br ready --json', got %s", triage.Commands.ListReady)
 	}
-	if triage.Commands.ClaimTop != "CI=1 bd ready --json  # No top pick available" {
+	if triage.Commands.ClaimTop != "CI=1 br ready --json  # No top pick available" {
 		t.Errorf("unexpected ClaimTop fallback: %q", triage.Commands.ClaimTop)
 	}
 }

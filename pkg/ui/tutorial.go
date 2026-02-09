@@ -1256,13 +1256,13 @@ Press **r** in List view to filter to **ready** issues only:
 This is your **actionable work queue**. These issues have no dependencies
 blocking them — you can start any of them right now.
 
-> **Tip:** Start your day with ` + "`bd ready`" + ` to see what you can tackle.
+> **Tip:** Start your day with ` + "`br ready`" + ` to see what you can tackle.
 
 ### Adding Dependencies
 
 From the command line:
 
-` + "```bash\nbd dep add bv-def2 bv-abc1   # def2 depends on abc1\n```" + `
+` + "```bash\nbr dep add bv-def2 bv-abc1   # def2 depends on abc1\n```" + `
 
 This creates the blocking relationship shown above.
 
@@ -1382,7 +1382,7 @@ This surfaces issues that are both important AND blocking other work.
 
 Or from the command line:
 
-` + "```bash\nbd update bv-abc123 --priority=P1\nbd update bv-abc123 --status=in_progress\n```" + `
+` + "```bash\nbr update bv-abc123 --priority=P1\nbr update bv-abc123 --status=in_progress\n```" + `
 
 > Press **→** to continue.`
 
@@ -1452,7 +1452,7 @@ The graph reveals:
 - **Parallel tracks**: Independent work streams
 - **Priority inversions**: Low-priority blocking high-priority
 
-> **Tip:** Use ` + "`bd blocked`" + ` to quickly see all blocked issues.
+> **Tip:** Use ` + "`br blocked`" + ` to quickly see all blocked issues.
 
 > Press **→** to continue to Views & Navigation.`
 
@@ -1770,7 +1770,7 @@ Press **h** to see the git-integrated timeline of your project.
 ### History Features
 
 - **Git commits** with associated bead changes
-- **Bead-only changes** from ` + "`bd`" + ` commands
+- **Bead-only changes** from ` + "`br`" + ` commands
 - **Time-travel preview**: See project state at any point
 
 ### History Navigation
@@ -2056,7 +2056,7 @@ In workspace mode, all views aggregate across repos:
 
 Issues can depend on issues in other repos:
 
-` + "```bash\nbd dep add fe-abc1 be-def2   # Frontend blocked by backend\n```" + `
+` + "```bash\nbr dep add fe-abc1 be-def2   # Frontend blocked by backend\n```" + `
 
 The graph view shows these cross-repo relationships.
 
@@ -2180,20 +2180,20 @@ Regular bv is for humans. **Robot mode** is for agents:
 ` + "```" + `
 1. Agent calls: bv --robot-next
 2. Receives: { "id": "bv-abc1", "title": "Fix auth" }
-3. Agent runs: bd update bv-abc1 --status=in_progress
+3. Agent runs: br update bv-abc1 --status=in_progress
 4. Agent does the work...
-5. Agent runs: bd close bv-abc1
+5. Agent runs: br close bv-abc1
 6. Agent calls: bv --robot-next (repeat)
 ` + "```" + `
 
-### The bd CLI (for Agents)
+### The br CLI (for Agents)
 
 | Command | Purpose |
 |---------|---------|
-| ` + "`bd ready`" + ` | List actionable issues |
-| ` + "`bd update <id> --status=in_progress`" + ` | Claim work |
-| ` + "`bd close <id>`" + ` | Complete work |
-| ` + "`bd sync`" + ` | Commit changes to git |
+| ` + "`br ready`" + ` | List actionable issues |
+| ` + "`br update <id> --status=in_progress`" + ` | Claim work |
+| ` + "`br close <id>`" + ` | Complete work |
+| ` + "`br sync`" + ` | Commit changes to git |
 
 ### AGENTS.md Integration
 
@@ -2217,7 +2217,7 @@ Let's walk through implementing a feature from start to finish.
 
 ### Step 1: Find Available Work
 
-` + "```bash\nbd ready                        # Show actionable issues\nbv --robot-triage | jq '.recommendations[0]'\n```" + `
+` + "```bash\nbr ready                        # Show actionable issues\nbv --robot-triage | jq '.recommendations[0]'\n```" + `
 
 Or in bv: press **r** to filter to ready issues.
 
@@ -2233,7 +2233,7 @@ Check: Is anything blocking this? Are there related tasks?
 
 ### Step 3: Claim the Work
 
-` + "```bash\nbd update bv-xyz1 --status=in_progress\n```" + `
+` + "```bash\nbr update bv-xyz1 --status=in_progress\n```" + `
 
 The issue moves to "In Progress" — other agents/devs know it's claimed.
 
@@ -2241,19 +2241,19 @@ The issue moves to "In Progress" — other agents/devs know it's claimed.
 
 As you work, you realize there are sub-tasks:
 
-` + "```bash\nbd create --title=\"Implement auth logic\" --type=task --priority=2\nbd create --title=\"Add API endpoint\" --type=task --priority=2\nbd create --title=\"Write tests\" --type=task --priority=2\n\n# Set dependencies\nbd dep add bv-tests bv-endpoint   # Tests depend on endpoint\nbd dep add bv-endpoint bv-auth    # Endpoint depends on auth\n```" + `
+` + "```bash\nbr create --title=\"Implement auth logic\" --type=task --priority=2\nbr create --title=\"Add API endpoint\" --type=task --priority=2\nbr create --title=\"Write tests\" --type=task --priority=2\n\n# Set dependencies\nbr dep add bv-tests bv-endpoint   # Tests depend on endpoint\nbr dep add bv-endpoint bv-auth    # Endpoint depends on auth\n```" + `
 
 ### Step 5: Work Through Sub-Tasks
 
-` + "```bash\n# Start first sub-task\nbd update bv-auth --status=in_progress\n# ... do the work ...\nbd close bv-auth\n\n# Endpoint is now unblocked!\nbd update bv-endpoint --status=in_progress\n# ... continue ...\n```" + `
+` + "```bash\n# Start first sub-task\nbr update bv-auth --status=in_progress\n# ... do the work ...\nbr close bv-auth\n\n# Endpoint is now unblocked!\nbr update bv-endpoint --status=in_progress\n# ... continue ...\n```" + `
 
 ### Step 6: Complete and Sync
 
-` + "```bash\nbd close bv-xyz1              # Close parent feature\nbd sync                        # Commit all changes to git\n```" + `
+` + "```bash\nbr close bv-xyz1              # Close parent feature\nbr sync                        # Commit all changes to git\n```" + `
 
 ### Pro Tips
 
-- **Check ` + "`bd ready`" + `** after each close — new work may have unblocked
+- **Check ` + "`br ready`" + `** after each close — new work may have unblocked
 - **Use ` + "`g`" + ` (graph view)** to visualize the sub-task structure
 - **Set realistic priorities** — P2 for standard work, P1 only for blockers
 
@@ -2269,7 +2269,7 @@ When a bug comes in, here's how to triage it efficiently.
 Bug arrives (from user, agent, or monitoring):
 - "Login fails for users with special characters in email"
 
-` + "```bash\nbd create --title=\"Login fails with special chars in email\" \\\n  --type=bug --priority=2\n```" + `
+` + "```bash\nbr create --title=\"Login fails with special chars in email\" \\\n  --type=bug --priority=2\n```" + `
 
 ### Step 2: Assess Severity
 
@@ -2294,7 +2294,7 @@ In bv, select the new issue and press **S** for triage suggestions:
 | Medium | P2 | Feature degraded |
 | Low | P3-P4 | Minor, cosmetic |
 
-` + "```bash\nbd update bv-bug1 --priority=1   # This is P1 - blocks logins\n```" + `
+` + "```bash\nbr update bv-bug1 --priority=1   # This is P1 - blocks logins\n```" + `
 
 ### Step 4: Add Labels for Categorization
 
@@ -2307,17 +2307,17 @@ Press **L** to open label picker, select:
 
 Does this bug block other work?
 
-` + "```bash\nbd dep add bv-feature1 bv-bug1  # Feature is blocked by this bug\n```" + `
+` + "```bash\nbr dep add bv-feature1 bv-bug1  # Feature is blocked by this bug\n```" + `
 
-Now bv-feature1 won't show in ` + "`bd ready`" + ` until the bug is fixed.
+Now bv-feature1 won't show in ` + "`br ready`" + ` until the bug is fixed.
 
 ### Step 6: Assign or Leave for Pickup
 
 Option A: Assign to someone
-` + "```bash\nbd update bv-bug1 --assignee=@alice\n```" + `
+` + "```bash\nbr update bv-bug1 --assignee=@alice\n```" + `
 
 Option B: Leave unassigned
-- High-priority bugs surface in ` + "`bd ready`" + ` automatically
+- High-priority bugs surface in ` + "`br ready`" + ` automatically
 - The triage system will recommend them
 
 ### Summary Checklist
@@ -2434,7 +2434,7 @@ Tell them about the help system:
 
 Find a good starter issue:
 
-` + "```bash\n# In bv: press L, select \"good-first-issue\" label\nbd list --label=good-first-issue --status=open\n```" + `
+` + "```bash\n# In bv: press L, select \"good-first-issue\" label\nbr list --label=good-first-issue --status=open\n```" + `
 
 Starter issues should:
 - Have clear scope
@@ -2448,10 +2448,10 @@ Guide them through:
 1. **Find the issue**: Use filters (o/r) and search (/)
 2. **Review details**: Press Enter to see full description
 3. **Check dependencies**: Press g for graph view
-4. **Claim it**: ` + "`bd update ID --status=in_progress`" + `
+4. **Claim it**: ` + "`br update ID --status=in_progress`" + `
 5. **Do the work**: Regular development process
-6. **Close it**: ` + "`bd close ID`" + `
-7. **Sync**: ` + "`bd sync`" + ` commits everything
+6. **Close it**: ` + "`br close ID`" + `
+7. **Sync**: ` + "`br sync`" + ` commits everything
 
 ### Step 5: Explain the Mental Model
 
@@ -2469,7 +2469,7 @@ Key concepts for new team members:
 [ ] Complete tutorial (or at least Quick Start)
 [ ] Assign first issue (good-first-issue label)
 [ ] Walk through claim → work → close cycle
-[ ] Verify bd sync works
+[ ] Verify br sync works
 ` + "```" + `
 
 > Press **→** to continue.`

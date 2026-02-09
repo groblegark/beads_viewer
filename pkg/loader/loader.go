@@ -156,7 +156,7 @@ func FindJSONLPathWithWarnings(beadsDir string, warnFunc func(msg string)) (stri
 
 	// Warn about detected merge artifacts
 	if len(mergeArtifacts) > 0 && warnFunc != nil {
-		warnFunc(fmt.Sprintf("Merge artifact files detected: %s. Consider running 'bd clean' to remove them.",
+		warnFunc(fmt.Sprintf("Merge artifact files detected: %s. Consider running 'br clean' to remove them.",
 			strings.Join(mergeArtifacts, ", ")))
 	}
 

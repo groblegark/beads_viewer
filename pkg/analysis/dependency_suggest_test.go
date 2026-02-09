@@ -135,8 +135,8 @@ func TestDetectMissingDependencies_SharedKeywords(t *testing.T) {
 		if sug.ActionCommand == "" {
 			t.Error("expected action command to be set")
 		}
-		if !strings.Contains(sug.ActionCommand, "bd dep add") {
-			t.Errorf("expected action to contain 'bd dep add', got %s", sug.ActionCommand)
+		if !strings.Contains(sug.ActionCommand, "br dep add") {
+			t.Errorf("expected action to contain 'br dep add', got %s", sug.ActionCommand)
 		}
 	}
 }

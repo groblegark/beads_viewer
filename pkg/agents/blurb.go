@@ -42,7 +42,7 @@ br create --title="..." --type=task --priority=2
 br update <id> --status=in_progress
 br close <id> --reason="Completed"
 br close <id1> <id2>  # Close multiple issues at once
-bd sync               # Commit and push changes
+br sync               # Commit and push changes
 ` + "```" + `
 
 ### Workflow Pattern
@@ -51,14 +51,14 @@ bd sync               # Commit and push changes
 2. **Claim**: Use ` + "`" + `br update <id> --status=in_progress` + "`" + `
 3. **Work**: Implement the task
 4. **Complete**: Use ` + "`" + `br close <id>` + "`" + `
-5. **Sync**: Always run ` + "`" + `bd sync` + "`" + ` at session end
+5. **Sync**: Always run ` + "`" + `br sync` + "`" + ` at session end
 
 ### Key Concepts
 
 - **Dependencies**: Issues can block other issues. ` + "`" + `br ready` + "`" + ` shows only unblocked work.
 - **Priority**: P0=critical, P1=high, P2=medium, P3=low, P4=backlog (use numbers, not words)
 - **Types**: task, bug, feature, epic, question, docs
-- **Blocking**: ` + "`" + `bd dep add <issue> <depends-on>` + "`" + ` to add dependencies
+- **Blocking**: ` + "`" + `br dep add <issue> <depends-on>` + "`" + ` to add dependencies
 
 ### Session Protocol
 
@@ -67,9 +67,9 @@ bd sync               # Commit and push changes
 ` + "```" + `bash
 git status              # Check what changed
 git add <files>         # Stage code changes
-bd sync                 # Commit beads changes
+br sync                 # Commit beads changes
 git commit -m "..."     # Commit code
-bd sync                 # Commit any new beads changes
+br sync                 # Commit any new beads changes
 git push                # Push to remote
 ` + "```" + `
 
@@ -79,7 +79,7 @@ git push                # Push to remote
 - Update status as you work (in_progress → closed)
 - Create new issues with ` + "`" + `br create` + "`" + ` when you discover tasks
 - Use descriptive titles and set appropriate priority/type
-- Always ` + "`" + `bd sync` + "`" + ` before ending session
+- Always ` + "`" + `br sync` + "`" + ` before ending session
 
 <!-- end-bv-agent-instructions -->`
 
