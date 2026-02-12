@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"flag"
+	flag "github.com/spf13/pflag"
 	"fmt"
 	"html"
 	"io"
@@ -104,8 +104,7 @@ func main() {
 	alertSeverity := flag.String("severity", "", "Filter robot alerts by severity (info|warning|critical)")
 	alertType := flag.String("alert-type", "", "Filter robot alerts by alert type (e.g., stale_issue)")
 	alertLabel := flag.String("alert-label", "", "Filter robot alerts by label match")
-	recipeName := flag.String("recipe", "", "Apply named recipe (e.g., triage, actionable, high-impact)")
-	recipeShort := flag.String("r", "", "Shorthand for --recipe")
+	recipeName := flag.StringP("recipe", "r", "", "Apply named recipe (e.g., triage, actionable, high-impact)")
 	semanticQuery := flag.String("search", "", "Semantic search query (vector-based; builds/updates index on first run)")
 	robotSearch := flag.Bool("robot-search", false, "Output semantic search results as JSON for AI agents (use with --search)")
 	searchLimit := flag.Int("search-limit", 10, "Max results for --search/--robot-search")
@@ -205,6 +204,12 @@ func main() {
 	// Experimental background snapshot worker (bv-o11l)
 	backgroundMode := flag.Bool("background-mode", false, "Enable experimental background snapshot loading (TUI only)")
 	noBackgroundMode := flag.Bool("no-background-mode", false, "Disable experimental background snapshot loading (TUI only)")
+	// Override pflag's default usage so -h/--help prints our custom header.
+	flag.Usage = func() {
+		fmt.Println("Usage: bv [options]")
+		fmt.Println("\nA TUI viewer for beads issue tracker.")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
 	// CPU profiling support
@@ -302,11 +307,6 @@ func main() {
 	if robotOutputFormat != "json" && robotOutputFormat != "toon" {
 		fmt.Fprintf(os.Stderr, "Invalid --format %q (expected json|toon)\n", robotOutputFormat)
 		os.Exit(2)
-	}
-
-	// Handle -r shorthand
-	if *recipeShort != "" && *recipeName == "" {
-		*recipeName = *recipeShort
 	}
 
 	if *help {
