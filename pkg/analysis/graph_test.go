@@ -386,6 +386,150 @@ func TestGetActionableIssuesBlockedStatus(t *testing.T) {
 	}
 }
 
+func TestGetActionableIssuesParentBlockedTransitive(t *testing.T) {
+	// Parent B is blocked by C (open). Child A has parent-child dep on B.
+	// A should NOT be actionable because its parent B is blocked.
+	// B should NOT be actionable because it's blocked by C.
+	// C should be actionable (no deps).
+	issues := []model.Issue{
+		{ID: "A", Status: model.StatusOpen, Dependencies: []*model.Dependency{
+			{DependsOnID: "B", Type: model.DepParentChild},
+		}},
+		{ID: "B", Status: model.StatusOpen, Dependencies: []*model.Dependency{
+			{DependsOnID: "C", Type: model.DepBlocks},
+		}},
+		{ID: "C", Status: model.StatusOpen},
+	}
+
+	an := analysis.NewAnalyzer(issues)
+	actionable := an.GetActionableIssues()
+
+	ids := getIDs(actionable)
+	if len(ids) != 1 || ids[0] != "C" {
+		t.Errorf("Expected only C actionable (A parent-blocked via B), got %v", ids)
+	}
+}
+
+func TestGetActionableIssuesParentBlockedTransitiveDeep(t *testing.T) {
+	// Grandparent C is blocked by D (open).
+	// B is child of C (parent-child dep on C) → B inherits blocked from C.
+	// A is child of B (parent-child dep on B) → A inherits blocked from B.
+	// Only D should be actionable.
+	issues := []model.Issue{
+		{ID: "A", Status: model.StatusOpen, Dependencies: []*model.Dependency{
+			{DependsOnID: "B", Type: model.DepParentChild},
+		}},
+		{ID: "B", Status: model.StatusOpen, Dependencies: []*model.Dependency{
+			{DependsOnID: "C", Type: model.DepParentChild},
+		}},
+		{ID: "C", Status: model.StatusOpen, Dependencies: []*model.Dependency{
+			{DependsOnID: "D", Type: model.DepBlocks},
+		}},
+		{ID: "D", Status: model.StatusOpen},
+	}
+
+	an := analysis.NewAnalyzer(issues)
+	actionable := an.GetActionableIssues()
+
+	ids := getIDs(actionable)
+	if len(ids) != 1 || ids[0] != "D" {
+		t.Errorf("Expected only D actionable (deep parent-blocked chain), got %v", ids)
+	}
+}
+
+func TestGetActionableIssuesParentNotBlockedChildActionable(t *testing.T) {
+	// Parent B is open but NOT blocked (no blocking deps).
+	// Child A has parent-child dep on B.
+	// Both should be actionable — parent-child alone doesn't block.
+	issues := []model.Issue{
+		{ID: "A", Status: model.StatusOpen, Dependencies: []*model.Dependency{
+			{DependsOnID: "B", Type: model.DepParentChild},
+		}},
+		{ID: "B", Status: model.StatusOpen},
+	}
+
+	an := analysis.NewAnalyzer(issues)
+	actionable := an.GetActionableIssues()
+
+	ids := getIDs(actionable)
+	if len(ids) != 2 {
+		t.Errorf("Expected 2 actionable (parent not blocked, child inherits nothing), got %v", ids)
+	}
+}
+
+func TestGetActionableIssuesParentClosedChildActionable(t *testing.T) {
+	// Parent B is closed. Child A has parent-child dep on B.
+	// A should be actionable — closed parent doesn't block child.
+	issues := []model.Issue{
+		{ID: "A", Status: model.StatusOpen, Dependencies: []*model.Dependency{
+			{DependsOnID: "B", Type: model.DepParentChild},
+		}},
+		{ID: "B", Status: model.StatusClosed},
+	}
+
+	an := analysis.NewAnalyzer(issues)
+	actionable := an.GetActionableIssues()
+
+	ids := getIDs(actionable)
+	if len(ids) != 1 || ids[0] != "A" {
+		t.Errorf("Expected A actionable (parent closed), got %v", ids)
+	}
+}
+
+func TestGetActionableIssuesParentBlockedResolvedChildUnblocked(t *testing.T) {
+	// Parent B was blocked by C, but C is now closed → B is unblocked.
+	// Child A should also be actionable since parent is no longer blocked.
+	issues := []model.Issue{
+		{ID: "A", Status: model.StatusOpen, Dependencies: []*model.Dependency{
+			{DependsOnID: "B", Type: model.DepParentChild},
+		}},
+		{ID: "B", Status: model.StatusOpen, Dependencies: []*model.Dependency{
+			{DependsOnID: "C", Type: model.DepBlocks},
+		}},
+		{ID: "C", Status: model.StatusClosed},
+	}
+
+	an := analysis.NewAnalyzer(issues)
+	actionable := an.GetActionableIssues()
+
+	ids := getIDs(actionable)
+	if len(ids) != 2 {
+		t.Errorf("Expected A and B actionable (blocker resolved), got %v", ids)
+	}
+	if !contains(ids, "A") || !contains(ids, "B") {
+		t.Errorf("Expected A and B in actionable set, got %v", ids)
+	}
+}
+
+func TestGetActionableIssuesMultipleChildrenParentBlocked(t *testing.T) {
+	// Parent P is blocked by X (open).
+	// Children C1, C2, C3 all have parent-child dep on P.
+	// None of the children should be actionable. Only X should be.
+	issues := []model.Issue{
+		{ID: "C1", Status: model.StatusOpen, Dependencies: []*model.Dependency{
+			{DependsOnID: "P", Type: model.DepParentChild},
+		}},
+		{ID: "C2", Status: model.StatusOpen, Dependencies: []*model.Dependency{
+			{DependsOnID: "P", Type: model.DepParentChild},
+		}},
+		{ID: "C3", Status: model.StatusOpen, Dependencies: []*model.Dependency{
+			{DependsOnID: "P", Type: model.DepParentChild},
+		}},
+		{ID: "P", Status: model.StatusOpen, Dependencies: []*model.Dependency{
+			{DependsOnID: "X", Type: model.DepBlocks},
+		}},
+		{ID: "X", Status: model.StatusOpen},
+	}
+
+	an := analysis.NewAnalyzer(issues)
+	actionable := an.GetActionableIssues()
+
+	ids := getIDs(actionable)
+	if len(ids) != 1 || ids[0] != "X" {
+		t.Errorf("Expected only X actionable (all children parent-blocked), got %v", ids)
+	}
+}
+
 func TestGetBlockers(t *testing.T) {
 	issues := []model.Issue{
 		{ID: "A", Status: model.StatusOpen, Dependencies: []*model.Dependency{

@@ -2328,44 +2328,91 @@ func findArticulationPoints(adj undirectedAdjacency) map[int64]bool {
 // An issue is actionable if:
 // 1. It is not closed or tombstone
 // 2. All its blocking dependencies (type "blocks") are closed or tombstone
+// 3. None of its parent issues (via "parent-child" deps) are themselves blocked
+//    (transitive parent-blocked propagation, matching br's behavior)
 // Missing blockers don't block (graceful degradation).
 // Returns list sorted by ID for determinism.
 func (a *Analyzer) GetActionableIssues() []model.Issue {
-	var actionable []model.Issue
+	// Phase 1: Compute the set of directly blocked issues.
+	// An issue is directly blocked if it has an open blocking-type dependency.
+	directlyBlocked := make(map[string]bool)
+	for id, issue := range a.issueMap {
+		if isClosedLikeStatus(issue.Status) {
+			continue
+		}
+		for _, dep := range issue.Dependencies {
+			if dep == nil || !dep.Type.IsBlocking() {
+				continue
+			}
+			blocker, exists := a.issueMap[dep.DependsOnID]
+			if !exists {
+				continue
+			}
+			if !isClosedLikeStatus(blocker.Status) {
+				directlyBlocked[id] = true
+				break
+			}
+		}
+	}
 
-	// Collect IDs first to sort for deterministic iteration
+	// Phase 2: Build parent→children index for transitive propagation.
+	// In the dependency model, a child issue has a dep with Type=="parent-child"
+	// and DependsOnID pointing to the parent. So we invert: for each such dep,
+	// the parent (DependsOnID) has the child (issue.ID).
+	childrenOf := make(map[string][]string)
+	for _, issue := range a.issueMap {
+		for _, dep := range issue.Dependencies {
+			if dep != nil && dep.Type == model.DepParentChild {
+				if _, exists := a.issueMap[dep.DependsOnID]; exists {
+					childrenOf[dep.DependsOnID] = append(childrenOf[dep.DependsOnID], issue.ID)
+				}
+			}
+		}
+	}
+
+	// Phase 3: Propagate blocked status through parent-child relationships.
+	// If a parent is blocked, its children are also blocked (transitively).
+	// Use BFS to propagate efficiently (not N^2). Cap depth at 50 to match br.
+	blocked := make(map[string]bool, len(directlyBlocked))
+	for id := range directlyBlocked {
+		blocked[id] = true
+	}
+
+	const maxDepth = 50
+	for depth := 0; depth < maxDepth; depth++ {
+		var newlyBlocked []string
+		for parentID := range blocked {
+			for _, childID := range childrenOf[parentID] {
+				if !blocked[childID] && !isClosedLikeStatus(a.issueMap[childID].Status) {
+					newlyBlocked = append(newlyBlocked, childID)
+				}
+			}
+		}
+		if len(newlyBlocked) == 0 {
+			break
+		}
+		for _, id := range newlyBlocked {
+			blocked[id] = true
+		}
+	}
+
+	// Phase 4: Collect actionable issues (not closed, not blocked).
 	var ids []string
 	for id := range a.issueMap {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 
+	var actionable []model.Issue
 	for _, id := range ids {
 		issue := a.issueMap[id]
 		if isClosedLikeStatus(issue.Status) {
 			continue
 		}
-
-		isBlocked := false
-		for _, dep := range issue.Dependencies {
-			if dep == nil || !dep.Type.IsBlocking() {
-				continue
-			}
-
-			blocker, exists := a.issueMap[dep.DependsOnID]
-			if !exists {
-				continue
-			}
-
-			if !isClosedLikeStatus(blocker.Status) {
-				isBlocked = true
-				break
-			}
+		if blocked[id] {
+			continue
 		}
-
-		if !isBlocked {
-			actionable = append(actionable, issue)
-		}
+		actionable = append(actionable, issue)
 	}
 
 	return actionable
