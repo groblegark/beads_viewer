@@ -55,3 +55,6 @@ test_screenshot.png
 a.out
 target-*/
 .playwright-mcp/
+
+# Crush tool logs (ephemeral)
+.crush/
