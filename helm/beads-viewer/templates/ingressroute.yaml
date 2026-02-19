@@ -1,0 +1,30 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ include "beads-viewer.fullname" . }}
+  labels:
+    {{- include "beads-viewer.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    {{- toYaml .Values.ingress.entryPoints | nindent 4 }}
+  routes:
+    - match: Host(`{{ .Values.ingress.host }}`) && PathPrefix(`{{ .Values.ingress.pathPrefix }}`)
+      kind: Rule
+      middlewares:
+        - name: {{ include "beads-viewer.fullname" . }}-strip-prefix
+      services:
+        - name: {{ include "beads-viewer.fullname" . }}
+          port: {{ .Values.service.port }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "beads-viewer.fullname" . }}-strip-prefix
+  labels:
+    {{- include "beads-viewer.labels" . | nindent 4 }}
+spec:
+  stripPrefix:
+    prefixes:
+      - {{ .Values.ingress.pathPrefix }}
+{{- end }}

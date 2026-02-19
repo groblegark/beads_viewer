@@ -1,0 +1,6 @@
+apiVersion: v2
+name: beads-viewer
+description: Helm chart for the beads_viewer web UI — static site served from daemon data
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

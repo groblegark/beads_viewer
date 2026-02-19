@@ -1,0 +1,94 @@
+# beads-viewer Helm chart values
+
+image:
+  repository: ghcr.io/groblegark/beads-viewer
+  pullPolicy: IfNotPresent
+  tag: ""  # Defaults to Chart.appVersion
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 1
+
+# --- Daemon connection ---
+# The beads_viewer loads issues from a bd-daemon instance
+daemon:
+  # URL of the bd-daemon HTTP API (in-cluster service)
+  url: "http://bd-daemon:9080"
+  # API key for authentication (or use existingSecret)
+  apiKey: ""
+  existingSecret: ""
+  existingSecretKey: "daemon-token"
+
+# --- Server config ---
+server:
+  port: 9000
+
+# --- Service ---
+service:
+  type: ClusterIP
+  port: 9000
+
+# --- Ingress (Traefik IngressRoute) ---
+ingress:
+  enabled: false
+  host: ""
+  entryPoints:
+    - web
+    - websecure
+  # Path prefix (stripped before forwarding)
+  pathPrefix: /viewer
+
+# --- Health probes ---
+startupProbe:
+  enabled: true
+  path: /__preview__/status
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 30
+
+livenessProbe:
+  enabled: true
+  path: /__preview__/status
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  enabled: true
+  path: /__preview__/status
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# --- Resources ---
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# --- Pod configuration ---
+podAnnotations: {}
+
+podSecurityContext:
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  runAsNonRoot: true
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
