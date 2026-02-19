@@ -20,9 +20,10 @@ import (
 
 // PreviewServer serves a static site bundle locally for previewing.
 type PreviewServer struct {
-	bundlePath string
-	port       int
-	server     *http.Server
+	bundlePath    string
+	port          int
+	server        *http.Server
+	liveReloadHub *LiveReloadHub
 }
 
 // NewPreviewServer creates a new preview server for the given bundle.
@@ -224,6 +225,9 @@ type PreviewConfig struct {
 
 	// Quiet suppresses status messages
 	Quiet bool
+
+	// LiveReload enables live-reload via SSE when bundle files change
+	LiveReload bool
 }
 
 // DefaultPreviewConfig returns sensible defaults for preview configuration.
@@ -232,6 +236,7 @@ func DefaultPreviewConfig() PreviewConfig {
 		Port:        0, // Auto-select
 		OpenBrowser: true,
 		Quiet:       false,
+		LiveReload:  true, // Enable by default for immediate feedback
 	}
 }
 
@@ -264,6 +269,47 @@ func StartPreviewWithConfig(config PreviewConfig) error {
 	// Create server
 	server := NewPreviewServer(config.BundlePath, port)
 
+	// Need to initialize the server first
+	mux := http.NewServeMux()
+	fs := http.FileServer(http.Dir(config.BundlePath))
+
+	// Set up live-reload if enabled
+	var liveReloadHub *LiveReloadHub
+	if config.LiveReload {
+		var err error
+		liveReloadHub, err = NewLiveReloadHub(config.BundlePath)
+		if err != nil {
+			if !config.Quiet {
+				fmt.Printf("Warning: Could not enable live-reload: %v\n", err)
+			}
+		} else {
+			if err := liveReloadHub.Start(); err != nil {
+				if !config.Quiet {
+					fmt.Printf("Warning: Could not start live-reload: %v\n", err)
+				}
+				liveReloadHub = nil
+			} else {
+				// Add SSE endpoint for live-reload
+				mux.HandleFunc("/__preview__/events", liveReloadHub.SSEHandler())
+				// Wrap file server with live-reload script injection
+				mux.Handle("/", liveReloadMiddleware(noCacheMiddleware(fs)))
+			}
+		}
+	}
+
+	// If no live-reload, just use no-cache middleware
+	if liveReloadHub == nil {
+		mux.Handle("/", noCacheMiddleware(fs))
+	}
+
+	mux.HandleFunc("/__preview__/status", server.statusHandler)
+	server.liveReloadHub = liveReloadHub
+
+	server.server = &http.Server{
+		Addr:    fmt.Sprintf("127.0.0.1:%d", port),
+		Handler: mux,
+	}
+
 	// Handle opening browser
 	if config.OpenBrowser {
 		go func() {
@@ -278,22 +324,14 @@ func StartPreviewWithConfig(config PreviewConfig) error {
 		}()
 	}
 
-	// Start server
+	// Print status message
 	if !config.Quiet {
 		fmt.Printf("\nPreview server running at http://127.0.0.1:%d\n", port)
 		fmt.Printf("Serving: %s\n", config.BundlePath)
+		if liveReloadHub != nil {
+			fmt.Println("Live-reload: enabled (browser will refresh on file changes)")
+		}
 		fmt.Println("\nPress Ctrl+C to stop")
-	}
-
-	// Need to initialize the server first
-	mux := http.NewServeMux()
-	fs := http.FileServer(http.Dir(config.BundlePath))
-	mux.Handle("/", noCacheMiddleware(fs))
-	mux.HandleFunc("/__preview__/status", server.statusHandler)
-
-	server.server = &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", port),
-		Handler: mux,
 	}
 
 	// Channel to receive OS signals
@@ -317,10 +355,18 @@ func StartPreviewWithConfig(config PreviewConfig) error {
 		if !config.Quiet {
 			fmt.Println("\nShutting down preview server...")
 		}
+		// Stop live-reload hub if running
+		if liveReloadHub != nil {
+			liveReloadHub.Stop()
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		return server.server.Shutdown(ctx)
 	case err := <-errChan:
+		// Stop live-reload hub on error
+		if liveReloadHub != nil {
+			liveReloadHub.Stop()
+		}
 		return err
 	}
 }

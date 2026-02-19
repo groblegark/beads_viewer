@@ -192,10 +192,10 @@ func AssertJSONEqual(t *testing.T, expected, actual interface{}) {
 
 // GoldenFile handles golden file comparisons.
 type GoldenFile struct {
-	t       *testing.T
-	dir     string
-	name    string
-	update  bool
+	t      *testing.T
+	dir    string
+	name   string
+	update bool
 }
 
 // NewGoldenFile creates a golden file helper.

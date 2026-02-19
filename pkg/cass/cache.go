@@ -42,13 +42,13 @@ type CacheStats struct {
 // Cache provides an LRU cache for cass correlation results.
 // It is safe for concurrent use.
 type Cache struct {
-	entries  map[string]*list.Element // key -> list element
-	order    *list.List               // LRU order (front = oldest)
-	maxSize  int
-	ttl      time.Duration
-	mu       sync.RWMutex
-	hits     int64
-	misses   int64
+	entries   map[string]*list.Element // key -> list element
+	order     *list.List               // LRU order (front = oldest)
+	maxSize   int
+	ttl       time.Duration
+	mu        sync.RWMutex
+	hits      int64
+	misses    int64
 	evictions int64
 
 	// For testing: allow overriding time

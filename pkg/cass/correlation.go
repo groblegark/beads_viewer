@@ -61,10 +61,10 @@ var stopWords = map[string]bool{
 type CorrelationStrategy string
 
 const (
-	StrategyIDMention  CorrelationStrategy = "id_mention"
-	StrategyKeywords   CorrelationStrategy = "keywords"
-	StrategyTimestamp  CorrelationStrategy = "timestamp"
-	StrategyCombined   CorrelationStrategy = "combined"
+	StrategyIDMention CorrelationStrategy = "id_mention"
+	StrategyKeywords  CorrelationStrategy = "keywords"
+	StrategyTimestamp CorrelationStrategy = "timestamp"
+	StrategyCombined  CorrelationStrategy = "combined"
 )
 
 // ScoredResult wraps a SearchResult with correlation scoring metadata.
@@ -78,12 +78,12 @@ type ScoredResult struct {
 
 // CorrelationResult contains the full correlation output for a bead.
 type CorrelationResult struct {
-	BeadID       string              // Which bead this is for
-	TopSessions  []ScoredResult      // Up to MaxSessionsReturned best matches
-	TotalFound   int                 // Total results before filtering
-	Strategy     CorrelationStrategy // Primary strategy that produced results
-	Keywords     []string            // Keywords used (for display)
-	ComputeTimeMs int                // Time spent computing correlation
+	BeadID        string              // Which bead this is for
+	TopSessions   []ScoredResult      // Up to MaxSessionsReturned best matches
+	TotalFound    int                 // Total results before filtering
+	Strategy      CorrelationStrategy // Primary strategy that produced results
+	Keywords      []string            // Keywords used (for display)
+	ComputeTimeMs int                 // Time spent computing correlation
 }
 
 // Correlator intelligently matches cass sessions to beads using multiple strategies.
@@ -151,11 +151,11 @@ func (c *Correlator) Correlate(ctx context.Context, issue *model.Issue) Correlat
 	if c.cache != nil {
 		if hint := c.cache.Get(issue.ID); hint != nil {
 			return CorrelationResult{
-				BeadID:      issue.ID,
-				TopSessions: convertHintToScoredResults(hint),
-				TotalFound:  hint.ResultCount,
-				Strategy:    StrategyCombined,
-				Keywords:    extractKeywordsFromHint(hint),
+				BeadID:        issue.ID,
+				TopSessions:   convertHintToScoredResults(hint),
+				TotalFound:    hint.ResultCount,
+				Strategy:      StrategyCombined,
+				Keywords:      extractKeywordsFromHint(hint),
 				ComputeTimeMs: 0, // Cache hit
 			}
 		}
@@ -618,8 +618,8 @@ func extractKeywordsFromHint(hint *CorrelationHint) []string {
 // WorkspaceFromBeadsPath extracts the workspace directory from a beads.jsonl path.
 func WorkspaceFromBeadsPath(beadsPath string) string {
 	// /path/to/project/.beads/beads.jsonl → /path/to/project
-	dir := filepath.Dir(beadsPath)        // → /path/to/project/.beads
-	return filepath.Dir(dir)              // → /path/to/project
+	dir := filepath.Dir(beadsPath) // → /path/to/project/.beads
+	return filepath.Dir(dir)       // → /path/to/project
 }
 
 // beadIDRegex matches bead IDs like "bv-abc123"

@@ -21,6 +21,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Dicklesworthstone/beads_viewer/pkg/analysis"
+	dbg "github.com/Dicklesworthstone/beads_viewer/pkg/debug"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/loader"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/recipe"
@@ -938,6 +939,17 @@ func (w *BackgroundWorker) State() WorkerState {
 	return w.state
 }
 
+// ProcessingDuration returns how long the worker has been in the processing state.
+// Returns 0 if not currently processing.
+func (w *BackgroundWorker) ProcessingDuration() time.Duration {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.state != WorkerProcessing || w.processingStart.IsZero() {
+		return 0
+	}
+	return time.Since(w.processingStart)
+}
+
 // processLoop watches for file changes and triggers processing.
 func (w *BackgroundWorker) processLoop(loopCtx context.Context, done chan struct{}) {
 	defer close(done)
@@ -1271,6 +1283,21 @@ func (w *BackgroundWorker) buildSnapshot() *DataSnapshot {
 	}
 
 	start := time.Now()
+	profileSnapshot := dbg.Enabled()
+	var snapshotTimings map[string]time.Duration
+	recordTiming := func(name string, d time.Duration) {
+		if !profileSnapshot {
+			return
+		}
+		if snapshotTimings == nil {
+			snapshotTimings = make(map[string]time.Duration, 8)
+		}
+		snapshotTimings[name] = d
+		dbg.LogTiming("worker."+name, d)
+	}
+	if profileSnapshot {
+		dbg.Log("worker.snapshot_start path=%s", w.beadsPath)
+	}
 	metricsEnabled := w.metricsEnabled
 	var memBefore runtime.MemStats
 	if metricsEnabled {
@@ -1287,6 +1314,10 @@ func (w *BackgroundWorker) buildSnapshot() *DataSnapshot {
 	// Determine dataset tier using a fast line count (bv-9thm).
 	sourceLineCount := 0
 	tier := datasetTierUnknown
+	var countStart time.Time
+	if profileSnapshot {
+		countStart = time.Now()
+	}
 	countErr := w.safeCompute("count_lines", func() error {
 		n, err := countJSONLLines(w.beadsPath)
 		if err != nil {
@@ -1296,6 +1327,9 @@ func (w *BackgroundWorker) buildSnapshot() *DataSnapshot {
 		tier = datasetTierForIssueCount(n)
 		return nil
 	})
+	if profileSnapshot {
+		recordTiming("line_count", time.Since(countStart))
+	}
 	if countErr != nil {
 		w.logEvent(LogLevelDebug, "snapshot_line_count_failed", map[string]any{
 			"path":  w.beadsPath,
@@ -1310,6 +1344,10 @@ func (w *BackgroundWorker) buildSnapshot() *DataSnapshot {
 	var issues []model.Issue
 	var pooledRefs []*model.Issue
 	var loadWarnings []string
+	var loadStart time.Time
+	if profileSnapshot {
+		loadStart = time.Now()
+	}
 	loadErr := w.safeCompute("load", func() error {
 		var err error
 		var loaded loader.PooledIssues
@@ -1331,6 +1369,9 @@ func (w *BackgroundWorker) buildSnapshot() *DataSnapshot {
 		}
 		return err
 	})
+	if profileSnapshot {
+		recordTiming("load_issues", time.Since(loadStart))
+	}
 
 	if loadErr != nil {
 		w.logEvent(LogLevelError, "snapshot_load_failed", map[string]any{
@@ -1409,6 +1450,9 @@ func (w *BackgroundWorker) buildSnapshot() *DataSnapshot {
 	})
 
 	analyzeDuration := time.Since(analyzeStart)
+	if profileSnapshot {
+		recordTiming("phase1", analyzeDuration)
+	}
 	if metricsEnabled {
 		w.metrics.lastPhase1Ns.Store(analyzeDuration.Nanoseconds())
 	}
@@ -1469,6 +1513,9 @@ func (w *BackgroundWorker) buildSnapshot() *DataSnapshot {
 	}
 
 	totalDuration := time.Since(start)
+	if profileSnapshot {
+		recordTiming("snapshot_total", totalDuration)
+	}
 	fields := map[string]any{
 		"issues":    len(issues),
 		"load_ms":   float64(loadDuration.Microseconds()) / 1000.0,
@@ -1483,6 +1530,14 @@ func (w *BackgroundWorker) buildSnapshot() *DataSnapshot {
 		fields["gc_pause_ms"] = float64(w.metrics.lastGCPauseDeltaNs.Load()) / 1e6
 	}
 	w.logEvent(LogLevelInfo, "snapshot_built", fields)
+	if profileSnapshot && snapshotTimings != nil {
+		dbg.Log("worker.snapshot_summary issues=%d total=%s load=%s phase1=%s",
+			len(issues),
+			formatReloadDuration(snapshotTimings["snapshot_total"]),
+			formatReloadDuration(snapshotTimings["load_issues"]),
+			formatReloadDuration(snapshotTimings["phase1"]),
+		)
+	}
 
 	// Spawn Phase 2 completion watcher if Phase 2 isn't ready yet
 	if snapshot != nil && !snapshot.Phase2Ready {
@@ -1638,6 +1693,9 @@ func (w *BackgroundWorker) runPhase2Analysis(stats *analysis.GraphStats, dataHas
 	phase2Duration := time.Since(phase2Start)
 	if w.metricsEnabled {
 		w.metrics.lastPhase2Ns.Store(phase2Duration.Nanoseconds())
+	}
+	if dbg.Enabled() {
+		dbg.LogTiming("worker.phase2", phase2Duration)
 	}
 
 	// Check if this Phase 2 completion still corresponds to the active snapshot.

@@ -117,4 +117,3 @@ type TimeParseError struct {
 func (e *TimeParseError) Error() string {
 	return "invalid time format: " + e.Input + " (expected relative like '14d', '2w', '1m' or ISO date)"
 }
-

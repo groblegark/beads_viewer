@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Dicklesworthstone/beads_viewer/pkg/correlation"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 )
 
@@ -276,10 +277,10 @@ type Alert struct {
 
 // CommandHelpers provides copy-paste commands for common actions
 type CommandHelpers struct {
-	ClaimTop      string `json:"claim_top"`      // CI=1 bd update <id> --status in_progress --json
-	ShowTop       string `json:"show_top"`       // CI=1 bd show <id> --json
-	ListReady     string `json:"list_ready"`     // CI=1 bd ready --json
-	ListBlocked   string `json:"list_blocked"`   // CI=1 bd blocked --json
+	ClaimTop      string `json:"claim_top"`      // CI=1 br update <id> --status in_progress --json
+	ShowTop       string `json:"show_top"`       // CI=1 br show <id> --json
+	ListReady     string `json:"list_ready"`     // CI=1 br ready --json
+	ListBlocked   string `json:"list_blocked"`   // CI=1 br blocked --json
 	RefreshTriage string `json:"refresh_triage"` // bv --robot-triage
 }
 
@@ -299,6 +300,9 @@ type TriageOptions struct {
 	// bv-87: Track/label-aware recommendation grouping for multi-agent coordination
 	GroupByTrack bool // Group recommendations by execution track (connected component)
 	GroupByLabel bool // Group recommendations by primary label
+
+	// History report for staleness analysis
+	History *correlation.HistoryReport
 }
 
 // TrackRecommendationGroup groups recommendations by execution track (bv-87)
@@ -307,7 +311,7 @@ type TrackRecommendationGroup struct {
 	Reason          string           `json:"reason"`                  // Why these are grouped (e.g., "Independent work stream")
 	Recommendations []Recommendation `json:"recommendations"`         // Recommendations in this track
 	TopPick         *TopPick         `json:"top_pick,omitempty"`      // Best item in this track
-	ClaimCommand    string           `json:"claim_command,omitempty"` // CI=1 bd update <top_pick_id> --status in_progress --json
+	ClaimCommand    string           `json:"claim_command,omitempty"` // CI=1 br update <top_pick_id> --status in_progress --json
 	TotalUnblocks   int              `json:"total_unblocks"`          // Sum of unblocks in this track
 }
 
@@ -316,7 +320,7 @@ type LabelRecommendationGroup struct {
 	Label           string           `json:"label"`
 	Recommendations []Recommendation `json:"recommendations"`         // Recommendations with this label
 	TopPick         *TopPick         `json:"top_pick,omitempty"`      // Best item with this label
-	ClaimCommand    string           `json:"claim_command,omitempty"` // CI=1 bd update <top_pick_id> --status in_progress --json
+	ClaimCommand    string           `json:"claim_command,omitempty"` // CI=1 br update <top_pick_id> --status in_progress --json
 	TotalUnblocks   int              `json:"total_unblocks"`          // Sum of unblocks for this label
 }
 
@@ -330,17 +334,32 @@ func ComputeTriageWithOptionsAndTime(issues []model.Issue, opts TriageOptions, n
 	// Build analyzer and stats
 	analyzer := NewAnalyzer(issues)
 
+	// bv-perf: Check if there are any open issues before computing Phase 2
+	// Phase 2 metrics (PageRank, Betweenness) are only used for scoring open issues.
+	// If all issues are closed, we can skip Phase 2 entirely.
+	hasOpenIssues := false
+	for _, issue := range issues {
+		if !isClosedLikeStatus(issue.Status) {
+			hasOpenIssues = true
+			break
+		}
+	}
+
 	// Use fast config for triage-only analysis (bv-t1js optimization)
+	// bv-perf: When no open issues, use NoPhase2Config to skip the goroutine entirely.
 	var stats *GraphStats
-	if opts.UseFastConfig {
+	if !hasOpenIssues {
+		// All issues closed - skip Phase 2 completely (no scoring needed)
+		stats = analyzer.AnalyzeAsyncWithConfig(context.Background(), NoPhase2Config())
+	} else if opts.UseFastConfig {
 		stats = analyzer.AnalyzeAsyncWithConfig(context.Background(), TriageConfig())
 	} else {
 		stats = analyzer.AnalyzeAsync(context.Background())
 	}
 
 	// Triage requires advanced metrics (PageRank, etc.) for scoring.
-	// If requested, wait for Phase 2 to complete.
-	if opts.WaitForPhase2 {
+	// If requested, wait for Phase 2 to complete - but only if there are open issues.
+	if opts.WaitForPhase2 && hasOpenIssues {
 		stats.WaitForPhase2()
 	}
 
@@ -384,7 +403,7 @@ func ComputeTriageFromAnalyzer(analyzer *Analyzer, stats *GraphStats, issues []m
 	impactScores := analyzer.ComputeImpactScoresFromStats(stats, now)
 
 	// Build unblocks map
-	unblocksMap := buildUnblocksMap(analyzer, issues)
+	unblocksMap := buildUnblocksMap(analyzer)
 
 	// Compute counts (uses cached actionable issues)
 	counts := computeCountsWithContext(issues, triageCtx)
@@ -424,6 +443,12 @@ func ComputeTriageFromAnalyzer(analyzer *Analyzer, stats *GraphStats, issues []m
 		recsByLabel = buildRecommendationsByLabel(recommendations, unblocksMap)
 	}
 
+	// Calculate staleness if history is available
+	var staleness *Staleness
+	if opts.History != nil {
+		staleness = ComputeStaleness(opts.History, issues, now)
+	}
+
 	return TriageResult{
 		Meta: TriageMeta{
 			Version:       "1.0.0",
@@ -445,17 +470,71 @@ func ComputeTriageFromAnalyzer(analyzer *Analyzer, stats *GraphStats, issues []m
 		RecommendationsByTrack: recsByTrack,
 		RecommendationsByLabel: recsByLabel,
 		ProjectHealth: ProjectHealth{
-			Counts:   counts,
-			Graph:    buildGraphHealth(stats),
-			Velocity: projectVelocity,
-			// Staleness remains nil until history integration is ready
+			Counts:    counts,
+			Graph:     buildGraphHealth(stats),
+			Velocity:  projectVelocity,
+			Staleness: staleness,
 		},
 		Commands: buildCommands(topID),
 	}
 }
 
+// ComputeStaleness calculates staleness metrics from history
+func ComputeStaleness(history *correlation.HistoryReport, issues []model.Issue, now time.Time) *Staleness {
+	const thresholdDays = 14
+	threshold := now.AddDate(0, 0, -thresholdDays)
+	staleCount := 0
+	maxDays := 0
+	stalestID := ""
+
+	for _, issue := range issues {
+		if issue.Status == model.StatusClosed || issue.Status == model.StatusTombstone {
+			continue
+		}
+
+		// Use history events to find true last activity
+		var lastActivity time.Time
+		if h, ok := history.Histories[issue.ID]; ok {
+			if len(h.Events) > 0 {
+				lastActivity = h.Events[len(h.Events)-1].Timestamp
+			}
+			if len(h.Commits) > 0 {
+				lastCommit := h.Commits[len(h.Commits)-1].Timestamp
+				if lastCommit.After(lastActivity) {
+					lastActivity = lastCommit
+				}
+			}
+		}
+
+		// Fallback to issue UpdatedAt if history missing
+		if lastActivity.IsZero() {
+			lastActivity = issue.UpdatedAt
+		}
+
+		if lastActivity.Before(threshold) {
+			staleCount++
+			days := int(now.Sub(lastActivity).Hours() / 24)
+			if days > maxDays {
+				maxDays = days
+				stalestID = issue.ID
+			}
+		}
+	}
+
+	if staleCount == 0 {
+		return nil
+	}
+
+	return &Staleness{
+		StaleCount:       staleCount,
+		StalestIssueID:   stalestID,
+		StalestIssueDays: maxDays,
+		ThresholdDays:    thresholdDays,
+	}
+}
+
 // buildUnblocksMap computes what each issue unblocks
-func buildUnblocksMap(analyzer *Analyzer, issues []model.Issue) map[string][]string {
+func buildUnblocksMap(analyzer *Analyzer) map[string][]string {
 	// O(E) unblocks computation.
 	//
 	// Semantics (must match Analyzer.computeUnblocks):
@@ -465,66 +544,74 @@ func buildUnblocksMap(analyzer *Analyzer, issues []model.Issue) map[string][]str
 	// - Closing blocker B unblocks dependent D iff all other existing blocking deps of D are closed.
 	// - Closed/tombstone dependents are ignored.
 	// - Result slices are sorted for determinism.
+	if analyzer == nil || analyzer.g == nil {
+		return map[string][]string{}
+	}
 
-	issueByID := analyzer.issueMap
+	nodeCount := analyzer.g.Nodes().Len()
+	if nodeCount == 0 {
+		return map[string][]string{}
+	}
 
-	// blockerID -> dependents that have a blocking dep on blockerID (deduped per dependent)
-	dependentsByBlocker := make(map[string][]string)
-	// dependentID -> number of currently-open blocking deps (existing + blocking + unique)
-	openBlockerCount := make(map[string]int, len(issues))
-
-	for _, dependent := range issues {
-		if isClosedLikeStatus(dependent.Status) {
+	open := make([]bool, nodeCount)
+	for id, issue := range analyzer.issueMap {
+		nodeID, ok := analyzer.idToNode[id]
+		if !ok || nodeID < 0 || int(nodeID) >= nodeCount {
 			continue
 		}
-		if len(dependent.Dependencies) == 0 {
+		if !isClosedLikeStatus(issue.Status) {
+			open[nodeID] = true
+		}
+	}
+
+	openBlockerCount := make([]int, nodeCount)
+	nodes := analyzer.g.Nodes()
+	for nodes.Next() {
+		u := nodes.Node().ID()
+		if u < 0 || int(u) >= nodeCount || !open[u] {
 			continue
 		}
-
-		seen := make(map[string]struct{}, len(dependent.Dependencies))
-		for _, dep := range dependent.Dependencies {
-			if dep == nil || !dep.Type.IsBlocking() {
+		blockers := analyzer.g.From(u)
+		for blockers.Next() {
+			v := blockers.Node().ID()
+			if v < 0 || int(v) >= nodeCount {
 				continue
 			}
-			blockerID := dep.DependsOnID
-			if blockerID == "" {
-				continue
-			}
-			blocker, exists := issueByID[blockerID]
-			if !exists {
-				continue
-			}
-			if _, dup := seen[blockerID]; dup {
-				continue
-			}
-			seen[blockerID] = struct{}{}
-
-			dependentsByBlocker[blockerID] = append(dependentsByBlocker[blockerID], dependent.ID)
-			if !isClosedLikeStatus(blocker.Status) {
-				openBlockerCount[dependent.ID]++
+			if open[v] {
+				openBlockerCount[u]++
 			}
 		}
 	}
 
-	unblocksMap := make(map[string][]string, len(issues))
-	for _, blocker := range issues {
-		if isClosedLikeStatus(blocker.Status) {
+	unblocksMap := make(map[string][]string, nodeCount)
+	nodes = analyzer.g.Nodes()
+	for nodes.Next() {
+		v := nodes.Node().ID()
+		if v < 0 || int(v) >= nodeCount || !open[v] {
+			continue
+		}
+		blockerID := analyzer.nodeToID[v]
+		if blockerID == "" {
 			continue
 		}
 
+		dependents := analyzer.g.To(v)
 		var unblocks []string
-		for _, dependentID := range dependentsByBlocker[blocker.ID] {
-			depIssue, ok := issueByID[dependentID]
-			if !ok || isClosedLikeStatus(depIssue.Status) {
+		for dependents.Next() {
+			u := dependents.Node().ID()
+			if u < 0 || int(u) >= nodeCount || !open[u] {
 				continue
 			}
-			if openBlockerCount[dependentID] == 1 {
-				unblocks = append(unblocks, dependentID)
+			if openBlockerCount[u] == 1 {
+				dependentID := analyzer.nodeToID[u]
+				if dependentID != "" {
+					unblocks = append(unblocks, dependentID)
+				}
 			}
 		}
 
 		sort.Strings(unblocks)
-		unblocksMap[blocker.ID] = unblocks
+		unblocksMap[blockerID] = unblocks
 	}
 
 	return unblocksMap
@@ -654,7 +741,7 @@ func buildQuickWins(scores []ImpactScore, unblocksMap map[string][]string, limit
 		quickWinScore float64
 	}
 
-	var candidates []candidate
+	candidates := make([]candidate, 0, len(scores))
 	for _, score := range scores {
 		unblocks := unblocksMap[score.IssueID]
 		// Quick win score formula: Balance Impact vs Effort
@@ -874,14 +961,14 @@ func buildGraphHealth(stats *GraphStats) GraphHealth {
 // buildCommands constructs helper commands, handling empty topID gracefully
 func buildCommands(topID string) CommandHelpers {
 	base := "CI=1 "
-	listReady := base + "bd ready --json"
-	listBlocked := base + "bd blocked --json"
+	listReady := base + "br ready --json"
+	listBlocked := base + "br blocked --json"
 
 	claimTop := listReady + "  # No top pick available"
 	showTop := listReady + "  # No top pick available"
 	if topID != "" {
-		claimTop = fmt.Sprintf("%sbd update %s --status in_progress --json", base, topID)
-		showTop = fmt.Sprintf("%sbd show %s --json", base, topID)
+		claimTop = fmt.Sprintf("%sbr update %s --status in_progress --json", base, topID)
+		showTop = fmt.Sprintf("%sbr show %s --json", base, topID)
 	}
 
 	return CommandHelpers{
@@ -970,7 +1057,7 @@ func ComputeTriageScoresWithOptions(issues []model.Issue, opts TriageScoringOpti
 	baseScores := analyzer.ComputeImpactScores()
 
 	// Build unblocks map for factor calculation
-	unblocksMap := buildUnblocksMap(analyzer, issues)
+	unblocksMap := buildUnblocksMap(analyzer)
 
 	return computeTriageScoresFromImpact(baseScores, unblocksMap, analyzer, opts)
 }
@@ -1369,7 +1456,7 @@ func GenerateTriageReasonsForScore(score TriageScore, triageCtx *TriageContext) 
 		Issue:           issue,
 		TriageScore:     &score,
 		UnblocksIDs:     unblocksMap[score.IssueID],
-		BlockedByIDs:    triageCtx.OpenBlockers(score.IssueID),   // cached
+		BlockedByIDs:    triageCtx.OpenBlockers(score.IssueID), // cached
 		DaysSinceUpdate: daysSinceUpdate,
 		IsQuickWin:      isQuickWin,
 		BlockerDepth:    triageCtx.BlockerDepth(score.IssueID), // cached
@@ -1387,45 +1474,92 @@ func EnhanceRecommendationWithTriageReasons(rec *Recommendation, triageReasons T
 	rec.Reasons = triageReasons.All
 }
 
-// buildRecommendationsByTrack groups recommendations by execution track
+// buildRecommendationsByTrack groups recommendations by execution layer (topological depth).
+// This enables multi-agent parallelization: all items in the same layer can be worked concurrently.
+//
+// Layering algorithm (BFS-based topological sort):
+//   - Layer 0 ("track-A"): All currently actionable items (no open blockers)
+//   - Layer 1 ("track-B"): Items blocked only by layer-0 items
+//   - Layer N: Items blocked only by layer-(N-1) items
+//
+// This differs from the previous connected-components approach which created
+// one track per disconnected work stream (issue #68).
 func buildRecommendationsByTrack(recs []Recommendation, analyzer *Analyzer, unblocksMap map[string][]string) []TrackRecommendationGroup {
-	// reuse plan logic to get tracks
-	plan := analyzer.GetExecutionPlan()
+	// Compute blocker depth for all recommendations.
+	// Depth 0 = actionable now (no blockers), Depth N = blocked by depth-(N-1) items.
+	blockerDepths := make(map[string]int, len(recs))
+	recByID := make(map[string]*Recommendation, len(recs))
 
-	// map issue -> track
-	issueTrack := make(map[string]string)
-	trackReasons := make(map[string]string)
-
-	for _, t := range plan.Tracks {
-		trackReasons[t.TrackID] = t.Reason
-		for _, item := range t.Items {
-			issueTrack[item.ID] = t.TrackID
-		}
+	for i := range recs {
+		recByID[recs[i].ID] = &recs[i]
 	}
 
-	groups := make(map[string]*TrackRecommendationGroup)
+	// BFS-based depth computation.
+	// Items with no blockers are depth 0. Items blocked by depth-0 items are depth 1, etc.
+	var dfs func(id string, visited map[string]bool) int
+	dfs = func(id string, visited map[string]bool) int {
+		if depth, ok := blockerDepths[id]; ok {
+			return depth
+		}
+		if visited[id] {
+			return -1 // Cycle detected
+		}
+		visited[id] = true
 
-	for _, rec := range recs {
-		trackID, ok := issueTrack[rec.ID]
-		if !ok {
-			trackID = "ungrouped"
+		rec := recByID[id]
+		if rec == nil || len(rec.BlockedBy) == 0 {
+			visited[id] = false
+			blockerDepths[id] = 0
+			return 0
 		}
 
-		if _, exists := groups[trackID]; !exists {
-			reason := trackReasons[trackID]
-			if trackID == "ungrouped" {
-				reason = "Issues not in actionable plan"
+		maxBlockerDepth := 0
+		for _, blockerID := range rec.BlockedBy {
+			blockerDepth := dfs(blockerID, visited)
+			if blockerDepth == -1 {
+				visited[id] = false
+				blockerDepths[id] = -1
+				return -1
 			}
-			groups[trackID] = &TrackRecommendationGroup{
+			if blockerDepth+1 > maxBlockerDepth {
+				maxBlockerDepth = blockerDepth + 1
+			}
+		}
+
+		visited[id] = false
+		blockerDepths[id] = maxBlockerDepth
+		return maxBlockerDepth
+	}
+
+	// Compute depths for all recommendations
+	for _, rec := range recs {
+		visited := make(map[string]bool)
+		dfs(rec.ID, visited)
+	}
+
+	// Group recommendations by depth into tracks
+	groups := make(map[int]*TrackRecommendationGroup)
+
+	for _, rec := range recs {
+		depth := blockerDepths[rec.ID]
+		if depth < 0 {
+			depth = 999 // Put cyclic items in a special track
+		}
+
+		if _, exists := groups[depth]; !exists {
+			trackID := generateTrackID(depth + 1) // depth 0 -> track-A, depth 1 -> track-B
+			reason := layerReason(depth, len(recs))
+			groups[depth] = &TrackRecommendationGroup{
 				TrackID: trackID,
 				Reason:  reason,
 			}
 		}
-		group := groups[trackID]
+
+		group := groups[depth]
 		group.Recommendations = append(group.Recommendations, rec)
 		group.TotalUnblocks += len(unblocksMap[rec.ID])
 
-		// update top pick logic (highest score)
+		// Update top pick (highest score in this layer)
 		if group.TopPick == nil || rec.Score > group.TopPick.Score {
 			group.TopPick = &TopPick{
 				ID:       rec.ID,
@@ -1434,21 +1568,37 @@ func buildRecommendationsByTrack(recs []Recommendation, analyzer *Analyzer, unbl
 				Reasons:  rec.Reasons,
 				Unblocks: len(unblocksMap[rec.ID]),
 			}
-			group.ClaimCommand = fmt.Sprintf("CI=1 bd update %s --status in_progress --json", rec.ID)
+			group.ClaimCommand = fmt.Sprintf("CI=1 br update %s --status in_progress --json", rec.ID)
 		}
 	}
 
-	// Convert map to slice and sort
-	var result []TrackRecommendationGroup
-	for _, g := range groups {
-		result = append(result, *g)
+	// Convert map to sorted slice (by depth/track order)
+	var depths []int
+	for d := range groups {
+		depths = append(depths, d)
+	}
+	sort.Ints(depths)
+
+	result := make([]TrackRecommendationGroup, 0, len(groups))
+	for _, d := range depths {
+		result = append(result, *groups[d])
 	}
 
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].TrackID < result[j].TrackID
-	})
-
 	return result
+}
+
+// layerReason returns a human-readable reason for a track's grouping.
+func layerReason(depth int, totalRecs int) string {
+	switch {
+	case depth == 0:
+		return "Actionable now - can work in parallel"
+	case depth == 1:
+		return "Becomes actionable after layer 0 completes"
+	case depth >= 999:
+		return "Cyclic dependencies detected"
+	default:
+		return fmt.Sprintf("Becomes actionable after layer %d completes", depth-1)
+	}
 }
 
 // buildRecommendationsByLabel groups recommendations by label
@@ -1478,7 +1628,7 @@ func buildRecommendationsByLabel(recs []Recommendation, unblocksMap map[string][
 				Reasons:  rec.Reasons,
 				Unblocks: len(unblocksMap[rec.ID]),
 			}
-			group.ClaimCommand = fmt.Sprintf("CI=1 bd update %s --status in_progress --json", rec.ID)
+			group.ClaimCommand = fmt.Sprintf("CI=1 br update %s --status in_progress --json", rec.ID)
 		}
 	}
 

@@ -167,8 +167,8 @@ func TestDescribeGitRange(t *testing.T) {
 			expected: "all history",
 		},
 		{
-			name: "with limit",
-			opts: CorrelatorOptions{Limit: 100},
+			name:     "with limit",
+			opts:     CorrelatorOptions{Limit: 100},
 			expected: "limit 100 commits",
 		},
 		{

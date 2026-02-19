@@ -194,17 +194,17 @@ func TimerWithCallback(m *TimingMetric, cb func(time.Duration)) func() {
 
 // Global timing metrics for various operations.
 var (
-	CycleDetection   = newTimingMetric("cycle_detection")
-	TopologicalSort  = newTimingMetric("topological_sort")
-	TriageAnalysis   = newTimingMetric("triage_analysis")
-	GraphStatsAccess = newTimingMetric("graph_stats_access")
-	VectorSearch     = newTimingMetric("vector_search")
-	JSONParsing      = newTimingMetric("json_parsing")
-	PageRankCompute  = newTimingMetric("pagerank_compute")
+	CycleDetection     = newTimingMetric("cycle_detection")
+	TopologicalSort    = newTimingMetric("topological_sort")
+	TriageAnalysis     = newTimingMetric("triage_analysis")
+	GraphStatsAccess   = newTimingMetric("graph_stats_access")
+	VectorSearch       = newTimingMetric("vector_search")
+	JSONParsing        = newTimingMetric("json_parsing")
+	PageRankCompute    = newTimingMetric("pagerank_compute")
 	BetweennessCompute = newTimingMetric("betweenness_compute")
-	HITSCompute      = newTimingMetric("hits_compute")
-	GraphLoad        = newTimingMetric("graph_load")
-	UIRender         = newTimingMetric("ui_render")
+	HITSCompute        = newTimingMetric("hits_compute")
+	GraphLoad          = newTimingMetric("graph_load")
+	UIRender           = newTimingMetric("ui_render")
 )
 
 // AllTimingMetrics returns all registered timing metrics.

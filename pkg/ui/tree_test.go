@@ -1175,12 +1175,12 @@ func TestLoadStateStaleIDs(t *testing.T) {
 // TestEnsureCursorVisible verifies the cursor-follows-viewport behavior
 func TestEnsureCursorVisible(t *testing.T) {
 	tests := []struct {
-		name             string
-		nodeCount        int
-		height           int
-		initialCursor    int
-		initialOffset    int
-		wantOffset       int
+		name          string
+		nodeCount     int
+		height        int
+		initialCursor int
+		initialOffset int
+		wantOffset    int
 	}{
 		{"cursor at start, offset at start", 100, 10, 0, 0, 0},
 		{"cursor in visible range", 100, 10, 5, 0, 0},

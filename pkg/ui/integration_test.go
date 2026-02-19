@@ -389,15 +389,15 @@ func TestRapidViewSwitchingWithNavigation(t *testing.T) {
 
 	// Mix view switches with navigation
 	actions := []tea.KeyMsg{
-		integrationKeyMsg("E"),           // Enter tree
-		integrationKeyMsg("j"),           // Move down
-		integrationKeyMsg("j"),           // Move down
-		integrationKeyMsg("b"),           // Enter board (from tree)
-		integrationKeyMsg("l"),           // Move right in board
-		integrationKeyMsg("g"),           // Enter graph
-		integrationKeyMsg("j"),           // Move down in graph
+		integrationKeyMsg("E"),            // Enter tree
+		integrationKeyMsg("j"),            // Move down
+		integrationKeyMsg("j"),            // Move down
+		integrationKeyMsg("b"),            // Enter board (from tree)
+		integrationKeyMsg("l"),            // Move right in board
+		integrationKeyMsg("g"),            // Enter graph
+		integrationKeyMsg("j"),            // Move down in graph
 		integrationSpecialKey(tea.KeyEsc), // Exit to list
-		integrationKeyMsg("j"),           // Move down in list
+		integrationKeyMsg("j"),            // Move down in list
 	}
 
 	for i := 0; i < 50; i++ {

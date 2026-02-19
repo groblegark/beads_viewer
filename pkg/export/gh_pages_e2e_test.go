@@ -50,7 +50,7 @@ exit 0
 	// Needs to handle auth status, repo view (fail then success), repo create, api calls.
 	// Use a state file to toggle repo view behavior.
 	stateFile := filepath.Join(t.TempDir(), "repo_created")
-	
+
 	ghScript := fmt.Sprintf(`#!/bin/sh
 echo "gh $*" >> "%s"
 
@@ -128,21 +128,21 @@ exit 0
 		t.Fatal(err)
 	}
 	logContent := string(logBytes)
-	
+
 	expectedCommands := []string{
-		"gh auth status",                                      // Check auth
-		"git config user.name",                                // Check git config
-		"git config user.email",                               // Check git config
-		"gh repo view my-site",                                // Check existence (mocks fail)
+		"gh auth status",        // Check auth
+		"git config user.name",  // Check git config
+		"git config user.email", // Check git config
+		"gh repo view my-site",  // Check existence (mocks fail)
 		"gh repo create my-site --public --description Test Site --clone=false", // Create
-		"gh api repos/TestUser/my-site/contents -q length",    // Check content
-		"git init",                                            // Init
-		"git add .",                                           // Add
-		"git commit -m Deploy static site via bv --pages",     // Commit
-		"git branch -M main",                                  // Branch
+		"gh api repos/TestUser/my-site/contents -q length",                      // Check content
+		"git init",  // Init
+		"git add .", // Add
+		"git commit -m Deploy static site via bv --pages",               // Commit
+		"git branch -M main",                                            // Branch
 		"git remote add origin https://github.com/TestUser/my-site.git", // Remote
-		"git push -u origin main",                             // Push
-		"gh api repos/TestUser/my-site/pages -X POST",         // Enable pages
+		"git push -u origin main",                                       // Push
+		"gh api repos/TestUser/my-site/pages -X POST",                   // Enable pages
 	}
 
 	for _, cmd := range expectedCommands {

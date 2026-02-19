@@ -47,8 +47,8 @@ func TestFuzzyScoreCaseInsensitive(t *testing.T) {
 
 func TestFuzzyScoreWordBoundaryBonus(t *testing.T) {
 	// Word boundary matches should score higher
-	score1 := fuzzyScore("my-api-service", "as")   // "a" at boundary, "s" in "service"
-	score2 := fuzzyScore("myapiservice", "as")     // "a" and "s" not at boundaries
+	score1 := fuzzyScore("my-api-service", "as") // "a" at boundary, "s" in "service"
+	score2 := fuzzyScore("myapiservice", "as")   // "a" and "s" not at boundaries
 	if score1 <= score2 {
 		t.Errorf("Expected word boundary match to score higher: boundary=%d, no-boundary=%d", score1, score2)
 	}

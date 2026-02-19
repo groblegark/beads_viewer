@@ -33,7 +33,38 @@
   </table>
 </div>
 
-### ⚡ Quick Install
+## Installation
+
+### Recommended: Homebrew (macOS/Linux)
+
+```bash
+brew install dicklesworthstone/tap/bv
+```
+
+This method provides:
+- Automatic updates via `brew upgrade`
+- Dependency management
+- Easy uninstall via `brew uninstall`
+
+### Windows: Scoop
+
+```powershell
+scoop bucket add dicklesworthstone https://github.com/Dicklesworthstone/scoop-bucket
+scoop install dicklesworthstone/bv
+```
+
+### Alternative: Direct Download
+
+Download the latest release for your platform (tar.gz assets):
+- [Linux x86_64](https://github.com/Dicklesworthstone/beads_viewer/releases/latest/download/bv_0.13.0_linux_amd64.tar.gz)
+- [Linux ARM64](https://github.com/Dicklesworthstone/beads_viewer/releases/latest/download/bv_0.13.0_linux_arm64.tar.gz)
+- [macOS Intel](https://github.com/Dicklesworthstone/beads_viewer/releases/latest/download/bv_0.13.0_darwin_amd64.tar.gz)
+- [macOS ARM](https://github.com/Dicklesworthstone/beads_viewer/releases/latest/download/bv_0.13.0_darwin_arm64.tar.gz)
+- [Windows](https://github.com/Dicklesworthstone/beads_viewer/releases/latest/download/bv_0.13.0_windows_amd64.tar.gz)
+
+> Note: Asset names include the release version. If a link 404s, open the latest release page and download the matching asset.
+
+### Alternative: Install Script
 
 **Linux/macOS:**
 ```bash
@@ -47,6 +78,30 @@ irm "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/insta
 > **Note:** Windows requires Go 1.21+ ([download](https://go.dev/dl/)). For best display, use Windows Terminal with a [Nerd Font](https://www.nerdfonts.com/).
 
 ---
+
+## 🤖 Agent Quickstart (Robot Mode)
+
+⚠️ **Never run bare `bv` in an agent context** — it launches the interactive TUI. Always use `--robot-*`.
+
+```bash
+# 1) Start with triage (single-call mega-command)
+bv --robot-triage
+
+# 2) Minimal mode: just the top pick + claim command
+bv --robot-next
+
+# 3) Token-optimized output (TOON)
+bv --robot-triage --format toon
+export BV_OUTPUT_FORMAT=toon
+
+# 4) Full robot help
+bv --robot-help
+```
+
+**Output conventions**
+- stdout = JSON/TOON data only
+- stderr = diagnostics
+- exit 0 = success
 
 ## 💡 TL;DR
 
@@ -119,6 +174,11 @@ bv is a graph-aware triage engine for Beads projects (.beads/beads.jsonl). Inste
 
 bv --robot-triage        # THE MEGA-COMMAND: start here
 bv --robot-next          # Minimal: just the single top pick + claim command
+
+# Token-optimized output (TOON) for lower LLM context usage:
+bv --robot-triage --format toon
+export BV_OUTPUT_FORMAT=toon
+bv --robot-next
 
 #### Other Commands
 
@@ -205,11 +265,11 @@ Use bv instead of parsing beads.jsonl—it computes PageRank, critical paths, cy
 **Manual Control:**
 
 ```bash
-bd agents --show              # Display current blurb content
-bd agents --check             # Check if blurb is present in agent file
-bd agents --add               # Add blurb to agent file
-bd agents --remove            # Remove blurb from agent file
-bd agents --clear-preference  # Reset the "don't ask again" preference
+bv --agents-check             # Check if blurb is present in agent file
+bv --agents-add               # Add blurb to agent file (creates file if needed)
+bv --agents-remove            # Remove blurb from agent file
+bv --agents-update            # Update blurb to latest version
+bv --agents-dry-run           # Show what would happen without executing
 ```
 
 **Version Tracking:**
@@ -543,7 +603,7 @@ flowchart LR
 ### 2. Zero-Latency Virtualization
 Rendering 10,000 issues would choke a naive terminal app. `bv` implements **Viewport Virtualization**:
 *   **Windowing:** We only render the slice of rows currently visible in the terminal window.
-*   **Pre-Computation:** Graph metrics (PageRank, etc.) are computed *once* at startup in a separate goroutine, not on every frame.
+*   **Pre-Computation:** Graph metrics (PageRank, etc.) are computed *once* at startup in a separate goroutine, not on every frame. The underlying graph uses a compact adjacency-list implementation that's 50-100× faster than naive map-backed approaches.
 *   **Detail Caching:** The Markdown renderer is instantiated lazily and reused, avoiding expensive regex recompilation.
 
 ### 3. Visual Graph Engine (`pkg/ui/graph.go`)
@@ -2327,7 +2387,7 @@ This feedback loop improves correlation accuracy over time—confirmed correlati
 
 ## 🤖 Cass Integration: AI Session Correlation (Optional)
 
-`bv` optionally integrates with [**cass**](https://github.com/Dicklesworthstone/cass) (Claude Agent Session Store)—a tool that captures and indexes coding sessions from AI assistants like Claude. When cass is installed, `bv` automatically enhances its correlation capabilities with session-based insights.
+`bv` optionally integrates with [**cass**](https://github.com/Dicklesworthstone/coding_agent_session_search) (Claude Agent Session Store)—a tool that captures and indexes coding sessions from AI assistants like Claude. When cass is installed, `bv` automatically enhances its correlation capabilities with session-based insights.
 
 ### How It Works
 
@@ -2411,7 +2471,7 @@ When cass is healthy, the status bar shows agent activity:
 ### Installing Cass
 
 ```bash
-# Install cass (see https://github.com/Dicklesworthstone/cass for full docs)
+# Install cass (see https://github.com/Dicklesworthstone/coding_agent_session_search for full docs)
 brew install dicklesworthstone/tap/cass   # macOS
 # or
 cargo install cass                         # From source
@@ -3344,7 +3404,7 @@ Reliability is key. `bv` doesn't assume a perfect environment; it actively handl
 The loader (`pkg/loader/loader.go`) doesn't just blindly open `.beads/beads.jsonl`. It employs a priority-based discovery algorithm:
 1.  **Canonical:** Checks for `issues.jsonl` (preferred by beads upstream).
 2.  **Legacy:** Fallback to `beads.jsonl` for backward compatibility.
-3.  **Base:** Checks `beads.base.jsonl` (used by `bd` in daemon mode).
+3.  **Base:** Checks `beads.base.jsonl` (used by `br` in daemon mode).
 4.  **Validation:** It skips temporary files like `*.backup` or `deletions.jsonl` to prevent displaying corrupted state.
 
 ### 2. Robust Parsing
@@ -3407,6 +3467,25 @@ All expensive algorithms (Betweenness, PageRank, HITS, Cycle detection) have 500
 **Detailed Tuning Guide:**
 For comprehensive performance documentation including troubleshooting, size-based algorithm selection, and tuning options, see [docs/performance.md](docs/performance.md).
 
+### Graph Engine Optimization
+
+The analysis engine uses a **compact adjacency-list graph** (`compactDirectedGraph`) instead of the standard Gonum map-backed implementation. This optimization delivers significant performance improvements:
+
+| Benchmark (696 issues) | Before | After | Improvement |
+|------------------------|--------|-------|-------------|
+| Full Triage | 67ms | 1.3ms | **52× faster** |
+| Full Analysis | 46ms | 477μs | **96× faster** |
+| Graph Build | 1.2ms | 323μs | **3.7× faster** |
+| Memory (Graph Build) | 735KB | 444KB | **40% less** |
+| Allocations | 4,647 | 2,512 | **46% fewer** |
+
+**Why it matters:** The default Gonum `DirectedGraph` uses map-backed edge sets, which cause heavy allocations during graph construction. Our compact implementation:
+- Pre-allocates node arrays at known size
+- Uses `[]int64` adjacency lists instead of `map[int64]set`
+- Eliminates map grow/rehash overhead entirely
+
+**Real-data benchmarks:** Run `go test -bench=BenchmarkRealData ./pkg/analysis/...` to validate performance against your project's actual `.beads/issues.jsonl` data.
+
 ---
 
 ## ❓ Troubleshooting & FAQ
@@ -3432,10 +3511,10 @@ No — it just means `bv` is using polling instead of filesystem events for live
 These indicators mean the background worker hasn’t produced a fresh snapshot recently (or needed to self-heal). Try `Ctrl+R`/`F5`, check filesystem permissions/health, or temporarily disable background mode (`BV_BACKGROUND_MODE=0`) to fall back to synchronous reload.
 
 **Q: I see "Cycles Detected" in the dashboard. What now?**
-A: A cycle (e.g., A → B → A) means your project logic is broken; no task can be finished first. Use the Insights Dashboard (`i`) to find the specific cycle members, then use `bd` to remove one of the dependency links (e.g., `bd unblock A --from B`).
+A: A cycle (e.g., A → B → A) means your project logic is broken; no task can be finished first. Use the Insights Dashboard (`i`) to find the specific cycle members, then use `br` to remove one of the dependency links (e.g., `br unblock A --from B`).
 
 **Q: Does this work with Jira/GitHub?**
-A: `bv` is data-agnostic. The Beads data schema supports an `external_ref` field. If you populate your `.beads/beads.jsonl` file with issues from external trackers (e.g., using a custom script or sync tool), `bv` will render them alongside your local tasks. Future versions of the `bd` CLI may support native syncing, but `bv` is ready for that data today.
+A: `bv` is data-agnostic. The Beads data schema supports an `external_ref` field. If you populate your `.beads/beads.jsonl` file with issues from external trackers (e.g., using a custom script or sync tool), `bv` will render them alongside your local tasks. Future versions of the `br` CLI may support native syncing, but `bv` is ready for that data today.
 
 **Q: What's the difference between "bead" and "issue"?**
 A: They're the same thing! In the Beads ecosystem, the unit of work is called a "bead" (hence the name). However, `bv` uses "issue" in many places since that's the more familiar term for most developers. The CLI flags use both interchangeably: `--robot-file-beads`, `--pages-include-closed` (issues), etc. Think of "bead" as the Beads-specific term and "issue" as the general concept.
@@ -3497,7 +3576,7 @@ Or add to your flake inputs:
 
 ## 🚀 Usage Guide
 
-Navigate to any project initialized with `bd init` and run:
+Navigate to any project initialized with `br init` and run:
 
 ```bash
 bv

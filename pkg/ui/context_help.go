@@ -232,6 +232,8 @@ const contextHelpSplit = `## Split View
 
 **Focus**
   Tab       Switch panes
+  <         Shrink list pane
+  >         Expand list pane
 
 **Left Pane (List)**
   j/k       Navigate issues

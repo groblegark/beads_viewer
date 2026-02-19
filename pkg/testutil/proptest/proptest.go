@@ -255,11 +255,11 @@ func OneOf[T any](options ...T) func(*rapid.T) T {
 
 // TestCase represents a single property test case.
 type TestCase[I, O any] struct {
-	Name    string
+	Name     string
 	GenInput func(*rapid.T) I
-	OldImpl func(I) O
-	NewImpl func(I) O
-	Equal   func(O, O) bool
+	OldImpl  func(I) O
+	NewImpl  func(I) O
+	Equal    func(O, O) bool
 }
 
 // RunAll runs multiple property test cases.

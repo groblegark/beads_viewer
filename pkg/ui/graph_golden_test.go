@@ -108,7 +108,7 @@ func TestGraphView_GoldenASCII(t *testing.T) {
 			renderer := lipgloss.NewRenderer(io.Discard)
 			renderer.SetHasDarkBackground(true) // Force dark mode for consistency
 			theme := DefaultTheme(renderer)
-			
+
 			g := NewGraphModel(issues, &insights, theme)
 			selectGraphID(t, &g, tc.selectedID)
 

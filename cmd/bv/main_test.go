@@ -168,8 +168,8 @@ func TestApplyRecipeFilters_DatesBlockersAndPrefix(t *testing.T) {
 	r := &recipe.Recipe{Filters: recipe.FilterConfig{
 		CreatedBefore: "1h",
 		UpdatedBefore: "1h",
-		HasBlockers:  ptrBool(true),
-		IDPrefix:     "API-2",
+		HasBlockers:   ptrBool(true),
+		IDPrefix:      "API-2",
 	}}
 	got := applyRecipeFilters(issues, r)
 	if len(got) != 1 || got[0].ID != "API-2" {

@@ -8,29 +8,27 @@ import (
 
 	"github.com/Dicklesworthstone/beads_viewer/pkg/analysis"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 // VelocityComparisonModel shows side-by-side velocity comparison for all labels
 type VelocityComparisonModel struct {
-	data          []velocityRow
-	cursor        int
-	width         int
-	height        int
-	scrollOffset  int
-	theme         Theme
+	data         []velocityRow
+	cursor       int
+	width        int
+	height       int
+	scrollOffset int
+	theme        Theme
 }
 
 // velocityRow holds computed velocity data for display
 type velocityRow struct {
 	Label        string
-	Weeks        [4]int    // W-4, W-3, W-2, W-1 (oldest to newest)
+	Weeks        [4]int // W-4, W-3, W-2, W-1 (oldest to newest)
 	Avg          float64
-	Trend        string    // "accelerating", "decelerating", "stable", "erratic", "insufficient_data"
-	TrendSymbol  string    // Visual indicator
-	SparklineBar string    // ASCII sparkline
-	MaxWeekValue int       // For normalization
+	Trend        string // "accelerating", "decelerating", "stable", "erratic", "insufficient_data"
+	TrendSymbol  string // Visual indicator
+	SparklineBar string // ASCII sparkline
+	MaxWeekValue int    // For normalization
 }
 
 // NewVelocityComparisonModel creates a new velocity comparison view
@@ -255,7 +253,7 @@ func (m *VelocityComparisonModel) View() string {
 				rowStyle = rowStyle.
 					Foreground(t.Primary).
 					Bold(true).
-					Background(lipgloss.Color("#333"))
+					Background(ThemeBg("#333"))
 			}
 
 			// Truncate label if needed
@@ -268,13 +266,13 @@ func (m *VelocityComparisonModel) View() string {
 			trendStyle := t.Renderer.NewStyle()
 			switch row.Trend {
 			case "accelerating":
-				trendStyle = trendStyle.Foreground(lipgloss.Color("#00ff00"))
+				trendStyle = trendStyle.Foreground(ThemeFg("#00ff00"))
 			case "decelerating":
-				trendStyle = trendStyle.Foreground(lipgloss.Color("#ff6666"))
+				trendStyle = trendStyle.Foreground(ThemeFg("#ff6666"))
 			case "stable":
 				trendStyle = trendStyle.Foreground(t.Secondary)
 			case "erratic":
-				trendStyle = trendStyle.Foreground(lipgloss.Color("#ffaa00"))
+				trendStyle = trendStyle.Foreground(ThemeFg("#ffaa00"))
 			default:
 				trendStyle = trendStyle.Foreground(t.Secondary)
 			}
@@ -285,7 +283,7 @@ func (m *VelocityComparisonModel) View() string {
 			}
 
 			// Format sparkline with color gradient
-			sparkStyle := t.Renderer.NewStyle().Foreground(lipgloss.Color("#88aaff"))
+			sparkStyle := t.Renderer.NewStyle().Foreground(ThemeFg("#88aaff"))
 
 			// Build row string
 			rowText := fmt.Sprintf("%-*s %*d %*d %*d %*d %*.1f ",

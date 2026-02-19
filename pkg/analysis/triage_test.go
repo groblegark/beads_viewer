@@ -68,8 +68,8 @@ func TestComputeTriage_BasicIssues(t *testing.T) {
 	}
 
 	// Commands should be populated
-	if triage.Commands.ListReady != "CI=1 bd ready --json" {
-		t.Errorf("expected 'CI=1 bd ready --json' command, got %s", triage.Commands.ListReady)
+	if triage.Commands.ListReady != "CI=1 br ready --json" {
+		t.Errorf("expected 'CI=1 br ready --json' command, got %s", triage.Commands.ListReady)
 	}
 }
 
@@ -355,7 +355,7 @@ func TestTriageEmptyCommands(t *testing.T) {
 
 	triage := ComputeTriage(issues)
 
-	if triage.Commands.ClaimTop != "CI=1 bd ready --json  # No top pick available" {
+	if triage.Commands.ClaimTop != "CI=1 br ready --json  # No top pick available" {
 		t.Errorf("unexpected ClaimTop fallback: %q", triage.Commands.ClaimTop)
 	}
 }
@@ -365,10 +365,10 @@ func TestTriageNoRecommendationsCommands(t *testing.T) {
 	triage := ComputeTriage(nil)
 
 	// Commands should be valid even with no recommendations
-	if triage.Commands.ListReady != "CI=1 bd ready --json" {
-		t.Errorf("expected 'CI=1 bd ready --json', got %s", triage.Commands.ListReady)
+	if triage.Commands.ListReady != "CI=1 br ready --json" {
+		t.Errorf("expected 'CI=1 br ready --json', got %s", triage.Commands.ListReady)
 	}
-	if triage.Commands.ClaimTop != "CI=1 bd ready --json  # No top pick available" {
+	if triage.Commands.ClaimTop != "CI=1 br ready --json  # No top pick available" {
 		t.Errorf("unexpected ClaimTop fallback: %q", triage.Commands.ClaimTop)
 	}
 }
@@ -1350,38 +1350,38 @@ func TestComputeTriageFromAnalyzer_Empty(t *testing.T) {
 func TestBuildTopPicks_FiltersBlockedItems(t *testing.T) {
 	recommendations := []Recommendation{
 		{
-			ID:         "blocked-high-score",
-			Title:      "Blocked but high score",
-			Score:      100.0,
-			BlockedBy:  []string{"blocker-1"},
+			ID:          "blocked-high-score",
+			Title:       "Blocked but high score",
+			Score:       100.0,
+			BlockedBy:   []string{"blocker-1"},
 			UnblocksIDs: []string{},
 		},
 		{
-			ID:         "actionable-1",
-			Title:      "Actionable item 1",
-			Score:      80.0,
-			BlockedBy:  nil, // Not blocked
+			ID:          "actionable-1",
+			Title:       "Actionable item 1",
+			Score:       80.0,
+			BlockedBy:   nil, // Not blocked
 			UnblocksIDs: []string{"downstream-1"},
 		},
 		{
-			ID:         "blocked-medium-score",
-			Title:      "Another blocked item",
-			Score:      70.0,
-			BlockedBy:  []string{"blocker-2", "blocker-3"},
+			ID:          "blocked-medium-score",
+			Title:       "Another blocked item",
+			Score:       70.0,
+			BlockedBy:   []string{"blocker-2", "blocker-3"},
 			UnblocksIDs: []string{},
 		},
 		{
-			ID:         "actionable-2",
-			Title:      "Actionable item 2",
-			Score:      60.0,
-			BlockedBy:  []string{}, // Empty slice = not blocked
+			ID:          "actionable-2",
+			Title:       "Actionable item 2",
+			Score:       60.0,
+			BlockedBy:   []string{}, // Empty slice = not blocked
 			UnblocksIDs: []string{},
 		},
 		{
-			ID:         "actionable-3",
-			Title:      "Actionable item 3",
-			Score:      50.0,
-			BlockedBy:  nil,
+			ID:          "actionable-3",
+			Title:       "Actionable item 3",
+			Score:       50.0,
+			BlockedBy:   nil,
 			UnblocksIDs: []string{"downstream-2", "downstream-3"},
 		},
 	}

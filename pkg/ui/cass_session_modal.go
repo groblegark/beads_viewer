@@ -16,18 +16,18 @@ import (
 // CassSessionModal displays correlated cass sessions for a bead.
 // It shows session previews with agent name, timestamp, match reason, and snippet.
 type CassSessionModal struct {
-	beadID      string              // The bead this modal is showing sessions for
-	sessions    []cass.ScoredResult // Correlated sessions to display
-	strategy    cass.CorrelationStrategy
-	keywords    []string // Keywords used for correlation (for display)
-	selected    int      // Currently selected session (for keyboard nav)
-	searchCmd   string   // Command to run for more results
-	theme       Theme
-	width       int
-	height      int
-	copied      bool       // Flash feedback for clipboard copy
-	copiedAt    time.Time  // When copy happened
-	maxDisplay  int        // Max sessions to show (rest are summarized)
+	beadID     string              // The bead this modal is showing sessions for
+	sessions   []cass.ScoredResult // Correlated sessions to display
+	strategy   cass.CorrelationStrategy
+	keywords   []string // Keywords used for correlation (for display)
+	selected   int      // Currently selected session (for keyboard nav)
+	searchCmd  string   // Command to run for more results
+	theme      Theme
+	width      int
+	height     int
+	copied     bool      // Flash feedback for clipboard copy
+	copiedAt   time.Time // When copy happened
+	maxDisplay int       // Max sessions to show (rest are summarized)
 }
 
 // NewCassSessionModal creates a modal from correlation results.

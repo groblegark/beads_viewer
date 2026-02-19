@@ -52,11 +52,11 @@ func TestGenerateInsights_WithData(t *testing.T) {
 		map[string]float64{"A": 1.0, "B": 2.0, "C": 0.5}, // hubs
 		map[string]float64{"A": 0.7, "B": 0.9, "C": 0.3}, // authorities
 		map[string]float64{"A": 3.0, "B": 1.0, "C": 5.0}, // criticalPathScore
-		map[string]int{"A": 0, "B": 1, "C": 0}, // outDegree
-		nil,                         // inDegree
-		[][]string{{"X", "Y", "Z"}}, // cycles
-		0.42,                        // density
-		nil,                         // topologicalOrder
+		map[string]int{"A": 0, "B": 1, "C": 0},           // outDegree
+		nil,                                              // inDegree
+		[][]string{{"X", "Y", "Z"}},                      // cycles
+		0.42,                                             // density
+		nil,                                              // topologicalOrder
 	)
 
 	insights := stats.GenerateInsights(2) // Limit to top 2

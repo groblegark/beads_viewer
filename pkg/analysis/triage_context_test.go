@@ -500,7 +500,7 @@ func TestTriageContext_ThreadSafe(t *testing.T) {
 	issues := make([]model.Issue, 100)
 	for i := 0; i < 100; i++ {
 		issues[i] = model.Issue{
-			ID:     string(rune('A' + i%26)) + string(rune('0'+i/26)),
+			ID:     string(rune('A'+i%26)) + string(rune('0'+i/26)),
 			Status: model.StatusOpen,
 		}
 	}

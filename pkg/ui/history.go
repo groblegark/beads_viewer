@@ -118,11 +118,11 @@ type HistoryModel struct {
 	focused        historyFocus
 
 	// Git-centric mode state (bv-tl3n)
-	viewMode             historyViewMode
-	commitList           []CommitListEntry // All commits sorted by recency
-	selectedGitCommit    int               // Index into commitList
-	selectedRelatedBead  int               // Index into selected commit's BeadIDs
-	gitScrollOffset      int               // For scrolling the commit list
+	viewMode            historyViewMode
+	commitList          []CommitListEntry // All commits sorted by recency
+	selectedGitCommit   int               // Index into commitList
+	selectedRelatedBead int               // Index into selected commit's BeadIDs
+	gitScrollOffset     int               // For scrolling the commit list
 
 	// Three-pane middle panel scroll state (bv-xrfh)
 	middleScrollOffset int // Scroll offset for middle pane content
@@ -135,11 +135,11 @@ type HistoryModel struct {
 	minConfidence float64 // Minimum confidence threshold (0-1)
 
 	// Search state (bv-nkrj)
-	searchInput      textinput.Model   // Text input for search query
-	searchMode       historySearchMode // Current search mode
-	searchActive     bool              // Whether search input is focused
-	lastSearchQuery  string            // Cache for detecting query changes
-	filteredCommits  []CommitListEntry // Filtered commit list for git mode
+	searchInput     textinput.Model   // Text input for search query
+	searchMode      historySearchMode // Current search mode
+	searchActive    bool              // Whether search input is focused
+	lastSearchQuery string            // Cache for detecting query changes
+	filteredCommits []CommitListEntry // Filtered commit list for git mode
 
 	// Display state
 	width  int
@@ -2610,8 +2610,6 @@ func (h *HistoryModel) renderCommitDetail(commit correlation.CorrelatedCommit, w
 
 // Helper functions
 
-
-
 func methodLabel(method correlation.CorrelationMethod) string {
 	switch method {
 	case correlation.MethodCoCommitted:
@@ -2685,12 +2683,12 @@ func relativeTime(t time.Time) string {
 
 // conventionalCommit holds parsed conventional commit info
 type conventionalCommit struct {
-	Type        string // feat, fix, docs, etc.
-	Scope       string // optional scope in parentheses
-	Breaking    bool   // has ! after type/scope
-	Subject     string // the description after the colon
-	Body        string // everything after first line
-	IsConventional bool // true if successfully parsed
+	Type           string // feat, fix, docs, etc.
+	Scope          string // optional scope in parentheses
+	Breaking       bool   // has ! after type/scope
+	Subject        string // the description after the colon
+	Body           string // everything after first line
+	IsConventional bool   // true if successfully parsed
 }
 
 // parseConventionalCommit parses a conventional commit message

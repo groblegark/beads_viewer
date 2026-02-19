@@ -190,9 +190,9 @@ func TestDeterministicOrdering(t *testing.T) {
 	t.Run("score takes precedence over less function", func(t *testing.T) {
 		c := New[testItem](3, lessFunc)
 
-		c.Add(testItem{ID: "zulu", Value: 1}, 10.0)   // Highest score, should be first
-		c.Add(testItem{ID: "alpha", Value: 2}, 5.0)  // Lower score
-		c.Add(testItem{ID: "bravo", Value: 3}, 5.0)  // Same lower score
+		c.Add(testItem{ID: "zulu", Value: 1}, 10.0) // Highest score, should be first
+		c.Add(testItem{ID: "alpha", Value: 2}, 5.0) // Lower score
+		c.Add(testItem{ID: "bravo", Value: 3}, 5.0) // Same lower score
 
 		results := c.Results()
 		if len(results) != 3 {

@@ -35,7 +35,7 @@ func TestSmartTruncateID(t *testing.T) {
 			if got == "" && tt.maxLen > 0 {
 				t.Errorf("Result is empty")
 			}
-			
+
 			// For specific mixed case that failed before fix:
 			if tt.name == "Mixed separators (complex)" {
 				// Before fix: split by '-' (defaulting sep to '-') would likely yield chunks that included '_'

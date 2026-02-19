@@ -9,18 +9,18 @@ type Context string
 
 const (
 	// Overlays (highest priority)
-	ContextLabelPicker       Context = "label-picker"
-	ContextRecipePicker      Context = "recipe-picker"
-	ContextHelp              Context = "help"
-	ContextQuitConfirm       Context = "quit-confirm"
-	ContextLabelHealthDetail Context = "label-health-detail"
-	ContextLabelDrilldown    Context = "label-drilldown"
+	ContextLabelPicker        Context = "label-picker"
+	ContextRecipePicker       Context = "recipe-picker"
+	ContextHelp               Context = "help"
+	ContextQuitConfirm        Context = "quit-confirm"
+	ContextLabelHealthDetail  Context = "label-health-detail"
+	ContextLabelDrilldown     Context = "label-drilldown"
 	ContextLabelGraphAnalysis Context = "label-graph-analysis"
-	ContextTimeTravelInput   Context = "time-travel-input"
-	ContextAlerts            Context = "alerts"
-	ContextRepoPicker        Context = "repo-picker"
-	ContextAgentPrompt       Context = "agent-prompt"
-	ContextCassSession       Context = "cass-session"
+	ContextTimeTravelInput    Context = "time-travel-input"
+	ContextAlerts             Context = "alerts"
+	ContextRepoPicker         Context = "repo-picker"
+	ContextAgentPrompt        Context = "agent-prompt"
+	ContextCassSession        Context = "cass-session"
 
 	// Views
 	ContextInsights       Context = "insights"
@@ -250,32 +250,32 @@ func (c Context) IsView() bool {
 func (c Context) TutorialPages() []int {
 	// Map contexts to relevant tutorial page indices
 	pageMap := map[Context][]int{
-		ContextList:               {0, 1, 2},     // Intro, Navigation, List View
-		ContextFilter:             {2, 3},        // List View, Filtering
-		ContextDetail:             {4},           // Detail View
-		ContextSplit:              {4, 2},        // Detail View, List View
-		ContextBoard:              {5},           // Board View
-		ContextGraph:              {6},           // Graph View
-		ContextInsights:           {7},           // Insights
-		ContextHistory:            {8},           // History View
-		ContextActionable:         {9},           // Actionable View
-		ContextTimeTravel:         {10},          // Time-Travel
-		ContextLabelDashboard:     {11},          // Labels
-		ContextFlowMatrix:         {11, 12},      // Labels, Advanced
-		ContextHelp:               {13},          // Keyboard Reference
-		ContextSprint:             {14},          // Sprints
-		ContextAttention:          {7},           // Insights (attention is part of insights)
-		ContextAlerts:             {15},          // Alerts
-		ContextLabelPicker:        {11, 3},       // Labels, Filtering
-		ContextRecipePicker:       {3, 12},       // Filtering, Advanced
-		ContextRepoPicker:         {12},          // Advanced (workspace)
-		ContextAgentPrompt:        {16},          // AI Agent Integration
-		ContextLabelHealthDetail:  {11},          // Labels
-		ContextLabelDrilldown:     {11},          // Labels
-		ContextLabelGraphAnalysis: {6, 11},       // Graph, Labels
-		ContextTimeTravelInput:    {10},          // Time-Travel
-		ContextQuitConfirm:        {1},           // Navigation basics
-		ContextCassSession:        {8},           // History (cass integrates with history)
+		ContextList:               {0, 1, 2}, // Intro, Navigation, List View
+		ContextFilter:             {2, 3},    // List View, Filtering
+		ContextDetail:             {4},       // Detail View
+		ContextSplit:              {4, 2},    // Detail View, List View
+		ContextBoard:              {5},       // Board View
+		ContextGraph:              {6},       // Graph View
+		ContextInsights:           {7},       // Insights
+		ContextHistory:            {8},       // History View
+		ContextActionable:         {9},       // Actionable View
+		ContextTimeTravel:         {10},      // Time-Travel
+		ContextLabelDashboard:     {11},      // Labels
+		ContextFlowMatrix:         {11, 12},  // Labels, Advanced
+		ContextHelp:               {13},      // Keyboard Reference
+		ContextSprint:             {14},      // Sprints
+		ContextAttention:          {7},       // Insights (attention is part of insights)
+		ContextAlerts:             {15},      // Alerts
+		ContextLabelPicker:        {11, 3},   // Labels, Filtering
+		ContextRecipePicker:       {3, 12},   // Filtering, Advanced
+		ContextRepoPicker:         {12},      // Advanced (workspace)
+		ContextAgentPrompt:        {16},      // AI Agent Integration
+		ContextLabelHealthDetail:  {11},      // Labels
+		ContextLabelDrilldown:     {11},      // Labels
+		ContextLabelGraphAnalysis: {6, 11},   // Graph, Labels
+		ContextTimeTravelInput:    {10},      // Time-Travel
+		ContextQuitConfirm:        {1},       // Navigation basics
+		ContextCassSession:        {8},       // History (cass integrates with history)
 	}
 	if pages, ok := pageMap[c]; ok {
 		return pages

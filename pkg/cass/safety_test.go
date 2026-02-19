@@ -723,7 +723,7 @@ func TestSafety_EndToEnd_InvisibilityGuarantee(t *testing.T) {
 	// cass is installed or not, UNLESS cass actually returns useful results.
 
 	scenarios := []struct {
-		name         string
+		name          string
 		setupLookPath func() func(string) (string, error)
 		setupHealth   func() func(context.Context, string, ...string) (int, error)
 		setupSearch   func() func(context.Context, string, ...string) ([]byte, error)

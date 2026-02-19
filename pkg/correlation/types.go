@@ -134,7 +134,7 @@ type HistoryStats struct {
 	UniqueAuthors      int            `json:"unique_authors"`
 	AvgCommitsPerBead  float64        `json:"avg_commits_per_bead"`
 	AvgCycleTimeDays   *float64       `json:"avg_cycle_time_days,omitempty"` // nil if no closed beads
-	MethodDistribution map[string]int `json:"method_distribution"`          // Count per correlation method
+	MethodDistribution map[string]int `json:"method_distribution"`           // Count per correlation method
 }
 
 // HistoryReport is the top-level output structure for --robot-history
@@ -187,14 +187,14 @@ type CorrelationSignal struct {
 type CorrelationExplanation struct {
 	CommitSHA      string              `json:"commit_sha"`
 	BeadID         string              `json:"bead_id"`
-	Confidence     float64             `json:"confidence"`      // 0.0 to 1.0
-	ConfidencePct  int                 `json:"confidence_pct"`  // 0 to 100 for display
-	Level          string              `json:"level"`           // "very high", "high", "moderate", "low", "very low"
-	Method         CorrelationMethod   `json:"method"`          // Primary correlation method
-	Signals        []CorrelationSignal `json:"signals"`         // All contributing signals
-	TotalWeight    int                 `json:"total_weight"`    // Sum of signal weights
-	Summary        string              `json:"summary"`         // One-line summary
-	Recommendation string              `json:"recommendation"`  // Suggested action
+	Confidence     float64             `json:"confidence"`     // 0.0 to 1.0
+	ConfidencePct  int                 `json:"confidence_pct"` // 0 to 100 for display
+	Level          string              `json:"level"`          // "very high", "high", "moderate", "low", "very low"
+	Method         CorrelationMethod   `json:"method"`         // Primary correlation method
+	Signals        []CorrelationSignal `json:"signals"`        // All contributing signals
+	TotalWeight    int                 `json:"total_weight"`   // Sum of signal weights
+	Summary        string              `json:"summary"`        // One-line summary
+	Recommendation string              `json:"recommendation"` // Suggested action
 }
 
 // FeedbackType categorizes user/agent feedback on correlations
@@ -211,22 +211,22 @@ const (
 
 // CorrelationFeedback represents user/agent feedback on a correlation
 type CorrelationFeedback struct {
-	CommitSHA   string       `json:"commit_sha"`
-	BeadID      string       `json:"bead_id"`
-	FeedbackAt  time.Time    `json:"feedback_at"`
-	FeedbackBy  string       `json:"feedback_by"`   // Agent or user identifier
-	Type        FeedbackType `json:"type"`          // confirm, reject, ignore
-	Reason      string       `json:"reason"`        // Optional explanation
-	OriginalConf float64     `json:"original_conf"` // Confidence before feedback
+	CommitSHA    string       `json:"commit_sha"`
+	BeadID       string       `json:"bead_id"`
+	FeedbackAt   time.Time    `json:"feedback_at"`
+	FeedbackBy   string       `json:"feedback_by"`   // Agent or user identifier
+	Type         FeedbackType `json:"type"`          // confirm, reject, ignore
+	Reason       string       `json:"reason"`        // Optional explanation
+	OriginalConf float64      `json:"original_conf"` // Confidence before feedback
 }
 
 // FeedbackStats provides aggregate statistics about correlation feedback
 type FeedbackStats struct {
-	TotalFeedback   int     `json:"total_feedback"`
-	Confirmed       int     `json:"confirmed"`
-	Rejected        int     `json:"rejected"`
-	Ignored         int     `json:"ignored"`
-	AccuracyRate    float64 `json:"accuracy_rate"`    // confirmed / (confirmed + rejected)
-	AvgConfirmConf  float64 `json:"avg_confirm_conf"` // Avg confidence of confirmed
-	AvgRejectConf   float64 `json:"avg_reject_conf"`  // Avg confidence of rejected
+	TotalFeedback  int     `json:"total_feedback"`
+	Confirmed      int     `json:"confirmed"`
+	Rejected       int     `json:"rejected"`
+	Ignored        int     `json:"ignored"`
+	AccuracyRate   float64 `json:"accuracy_rate"`    // confirmed / (confirmed + rejected)
+	AvgConfirmConf float64 `json:"avg_confirm_conf"` // Avg confidence of confirmed
+	AvgRejectConf  float64 `json:"avg_reject_conf"`  // Avg confidence of rejected
 }

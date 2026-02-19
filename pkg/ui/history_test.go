@@ -848,13 +848,13 @@ func TestHistoryModel_DetermineLayout(t *testing.T) {
 		width  int
 		layout historyLayout
 	}{
-		{80, layoutNarrow},      // < 100 = narrow
-		{99, layoutNarrow},      // < 100 = narrow
-		{100, layoutStandard},   // >= 100 < 150 = standard
-		{120, layoutStandard},   // >= 100 < 150 = standard
-		{149, layoutStandard},   // >= 100 < 150 = standard
-		{150, layoutWide},       // >= 150 = wide
-		{200, layoutWide},       // >= 150 = wide
+		{80, layoutNarrow},    // < 100 = narrow
+		{99, layoutNarrow},    // < 100 = narrow
+		{100, layoutStandard}, // >= 100 < 150 = standard
+		{120, layoutStandard}, // >= 100 < 150 = standard
+		{149, layoutStandard}, // >= 100 < 150 = standard
+		{150, layoutWide},     // >= 150 = wide
+		{200, layoutWide},     // >= 150 = wide
 	}
 
 	for _, tt := range tests {
@@ -993,12 +993,12 @@ func TestRelativeTimeFuture(t *testing.T) {
 
 func TestParseConventionalCommit(t *testing.T) {
 	tests := []struct {
-		msg            string
-		wantConv       bool
-		wantType       string
-		wantScope      string
-		wantBreaking   bool
-		wantSubject    string
+		msg          string
+		wantConv     bool
+		wantType     string
+		wantScope    string
+		wantBreaking bool
+		wantSubject  string
 	}{
 		{"feat: add new feature", true, "feat", "", false, "add new feature"},
 		{"fix(auth): resolve login bug", true, "fix", "auth", false, "resolve login bug"},
@@ -1064,10 +1064,10 @@ func TestFormatCycleTime(t *testing.T) {
 		days float64
 		want string
 	}{
-		{0.01, "14m"},  // 0.01 * 24 = 0.24 hours < 1, so minutes: 0.24 * 60 = 14.4 → "14m"
-		{0.1, "2.4h"},  // 0.1 * 24 = 2.4 hours >= 1, so "2.4h"
-		{2.5, "2.5d"},  // 2.5 days < 7, so "2.5d"
-		{10, "1.4w"},   // 10 days >= 7, so weeks: 10/7 = 1.43 → "1.4w"
+		{0.01, "14m"}, // 0.01 * 24 = 0.24 hours < 1, so minutes: 0.24 * 60 = 14.4 → "14m"
+		{0.1, "2.4h"}, // 0.1 * 24 = 2.4 hours >= 1, so "2.4h"
+		{2.5, "2.5d"}, // 2.5 days < 7, so "2.5d"
+		{10, "1.4w"},  // 10 days >= 7, so weeks: 10/7 = 1.43 → "1.4w"
 	}
 
 	for _, tt := range tests {

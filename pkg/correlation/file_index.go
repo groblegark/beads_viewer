@@ -11,12 +11,12 @@ import (
 
 // BeadReference links a bead to a file via commits.
 type BeadReference struct {
-	BeadID     string    `json:"bead_id"`
-	Title      string    `json:"title"`
-	Status     string    `json:"status"`     // open/in_progress/closed
-	CommitSHAs []string  `json:"commit_shas"` // which commits linked this bead to this file
-	LastTouch  time.Time `json:"last_touch"`  // most recent commit timestamp
-	TotalChanges int     `json:"total_changes"` // sum of insertions + deletions across commits
+	BeadID       string    `json:"bead_id"`
+	Title        string    `json:"title"`
+	Status       string    `json:"status"`        // open/in_progress/closed
+	CommitSHAs   []string  `json:"commit_shas"`   // which commits linked this bead to this file
+	LastTouch    time.Time `json:"last_touch"`    // most recent commit timestamp
+	TotalChanges int       `json:"total_changes"` // sum of insertions + deletions across commits
 }
 
 // FileBeadIndex provides O(1) lookup from file path to beads that touched it.
@@ -30,8 +30,8 @@ type FileBeadIndex struct {
 
 // FileIndexStats contains aggregate statistics about the file index.
 type FileIndexStats struct {
-	TotalFiles       int `json:"total_files"`       // number of unique files
-	TotalBeadLinks   int `json:"total_bead_links"`  // sum of all bead references
+	TotalFiles             int `json:"total_files"`               // number of unique files
+	TotalBeadLinks         int `json:"total_bead_links"`          // sum of all bead references
 	FilesWithMultipleBeads int `json:"files_with_multiple_beads"` // files touched by >1 bead
 }
 
@@ -377,19 +377,19 @@ type FileHotspot struct {
 
 // CoChangeEntry represents a file that frequently co-changes with another file.
 type CoChangeEntry struct {
-	FilePath       string  `json:"file_path"`        // The related file
-	CoChangeCount  int     `json:"co_change_count"`  // Number of commits where both files changed
-	TotalCommits   int     `json:"total_commits"`    // Total commits touching the source file
-	Correlation    float64 `json:"correlation"`      // co_change_count / total_commits (0.0 - 1.0)
-	SampleCommits  []string `json:"sample_commits"`  // Up to 3 sample commit SHAs
+	FilePath      string   `json:"file_path"`       // The related file
+	CoChangeCount int      `json:"co_change_count"` // Number of commits where both files changed
+	TotalCommits  int      `json:"total_commits"`   // Total commits touching the source file
+	Correlation   float64  `json:"correlation"`     // co_change_count / total_commits (0.0 - 1.0)
+	SampleCommits []string `json:"sample_commits"`  // Up to 3 sample commit SHAs
 }
 
 // CoChangeResult is the result of looking up files that co-change with a given file.
 type CoChangeResult struct {
-	FilePath      string          `json:"file_path"`       // The queried file
-	TotalCommits  int             `json:"total_commits"`   // Total commits touching this file
-	RelatedFiles  []CoChangeEntry `json:"related_files"`   // Files that co-change, sorted by correlation
-	Threshold     float64         `json:"threshold"`       // Minimum correlation threshold used
+	FilePath     string          `json:"file_path"`     // The queried file
+	TotalCommits int             `json:"total_commits"` // Total commits touching this file
+	RelatedFiles []CoChangeEntry `json:"related_files"` // Files that co-change, sorted by correlation
+	Threshold    float64         `json:"threshold"`     // Minimum correlation threshold used
 }
 
 // CoChangeMatrix stores co-change relationships between files.

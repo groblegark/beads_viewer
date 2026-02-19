@@ -41,15 +41,15 @@ type CausalEvent struct {
 
 // CausalChain represents the full causal flow for a bead
 type CausalChain struct {
-	BeadID     string         `json:"bead_id"`
-	Title      string         `json:"title"`
-	Status     string         `json:"status"`
-	Events     []CausalEvent  `json:"events"`       // All events in chronological order
-	EdgeCount  int            `json:"edge_count"`   // Number of causal links
-	StartTime  time.Time      `json:"start_time"`   // First event time
-	EndTime    time.Time      `json:"end_time"`     // Last event time (or now if open)
-	TotalTime  time.Duration  `json:"total_time"`   // Total elapsed time
-	IsComplete bool           `json:"is_complete"`  // True if bead is closed
+	BeadID     string        `json:"bead_id"`
+	Title      string        `json:"title"`
+	Status     string        `json:"status"`
+	Events     []CausalEvent `json:"events"`      // All events in chronological order
+	EdgeCount  int           `json:"edge_count"`  // Number of causal links
+	StartTime  time.Time     `json:"start_time"`  // First event time
+	EndTime    time.Time     `json:"end_time"`    // Last event time (or now if open)
+	TotalTime  time.Duration `json:"total_time"`  // Total elapsed time
+	IsComplete bool          `json:"is_complete"` // True if bead is closed
 }
 
 // BlockedPeriod represents a contiguous period when the bead was blocked
@@ -62,20 +62,20 @@ type BlockedPeriod struct {
 
 // CausalInsights contains derived analysis from the causal chain
 type CausalInsights struct {
-	TotalDuration      time.Duration   `json:"total_duration"`       // Total time from create to close/now
-	BlockedDuration    time.Duration   `json:"blocked_duration"`     // Total time spent blocked
-	ActiveDuration     time.Duration   `json:"active_duration"`      // Time not blocked
-	BlockedPercentage  float64         `json:"blocked_percentage"`   // % of time blocked
-	BlockedPeriods     []BlockedPeriod `json:"blocked_periods"`      // Each blocked period
-	CriticalPath       []int           `json:"critical_path"`        // Event IDs on critical path
-	CriticalPathDesc   string          `json:"critical_path_desc"`   // Human-readable critical path
-	CommitCount        int             `json:"commit_count"`         // Number of commits
-	AvgTimeBetween     *time.Duration  `json:"avg_time_between"`     // Avg time between events
-	LongestGap         *time.Duration  `json:"longest_gap"`          // Longest gap between events
-	LongestGapDesc     string          `json:"longest_gap_desc"`     // Description of longest gap
-	EstimatedWithout   *time.Duration  `json:"estimated_without"`    // Est. time without blocks
-	Summary            string          `json:"summary"`              // One-line summary
-	Recommendations    []string        `json:"recommendations"`      // Actionable insights
+	TotalDuration     time.Duration   `json:"total_duration"`     // Total time from create to close/now
+	BlockedDuration   time.Duration   `json:"blocked_duration"`   // Total time spent blocked
+	ActiveDuration    time.Duration   `json:"active_duration"`    // Time not blocked
+	BlockedPercentage float64         `json:"blocked_percentage"` // % of time blocked
+	BlockedPeriods    []BlockedPeriod `json:"blocked_periods"`    // Each blocked period
+	CriticalPath      []int           `json:"critical_path"`      // Event IDs on critical path
+	CriticalPathDesc  string          `json:"critical_path_desc"` // Human-readable critical path
+	CommitCount       int             `json:"commit_count"`       // Number of commits
+	AvgTimeBetween    *time.Duration  `json:"avg_time_between"`   // Avg time between events
+	LongestGap        *time.Duration  `json:"longest_gap"`        // Longest gap between events
+	LongestGapDesc    string          `json:"longest_gap_desc"`   // Description of longest gap
+	EstimatedWithout  *time.Duration  `json:"estimated_without"`  // Est. time without blocks
+	Summary           string          `json:"summary"`            // One-line summary
+	Recommendations   []string        `json:"recommendations"`    // Actionable insights
 }
 
 // CausalityResult is the top-level output for --robot-causality

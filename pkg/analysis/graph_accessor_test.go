@@ -8,17 +8,17 @@ import (
 // createTestGraphStatsForAccessors creates a GraphStats with known test data.
 func createTestGraphStatsForAccessors() *GraphStats {
 	return NewGraphStatsForTest(
-		map[string]float64{"issue-1": 0.5, "issue-2": 0.3, "issue-3": 0.2},              // pageRank
-		map[string]float64{"issue-1": 10.0, "issue-2": 5.0, "issue-3": 2.0},             // betweenness
-		map[string]float64{"issue-1": 0.8, "issue-2": 0.6, "issue-3": 0.4},              // eigenvector
-		map[string]float64{"issue-1": 0.7, "issue-2": 0.5, "issue-3": 0.3},              // hubs
-		map[string]float64{"issue-1": 0.9, "issue-2": 0.7, "issue-3": 0.5},              // authorities
-		map[string]float64{"issue-1": 3.0, "issue-2": 2.0, "issue-3": 1.0},              // criticalPathScore
-		map[string]int{"issue-1": 2, "issue-2": 1, "issue-3": 3},                        // outDegree
-		map[string]int{"issue-1": 1, "issue-2": 2, "issue-3": 1},                        // inDegree
-		[][]string{{"issue-1", "issue-2", "issue-1"}},                                   // cycles
-		0.5,                                                                             // density
-		[]string{"issue-3", "issue-2", "issue-1"},                                       // topologicalOrder
+		map[string]float64{"issue-1": 0.5, "issue-2": 0.3, "issue-3": 0.2},  // pageRank
+		map[string]float64{"issue-1": 10.0, "issue-2": 5.0, "issue-3": 2.0}, // betweenness
+		map[string]float64{"issue-1": 0.8, "issue-2": 0.6, "issue-3": 0.4},  // eigenvector
+		map[string]float64{"issue-1": 0.7, "issue-2": 0.5, "issue-3": 0.3},  // hubs
+		map[string]float64{"issue-1": 0.9, "issue-2": 0.7, "issue-3": 0.5},  // authorities
+		map[string]float64{"issue-1": 3.0, "issue-2": 2.0, "issue-3": 1.0},  // criticalPathScore
+		map[string]int{"issue-1": 2, "issue-2": 1, "issue-3": 3},            // outDegree
+		map[string]int{"issue-1": 1, "issue-2": 2, "issue-3": 1},            // inDegree
+		[][]string{{"issue-1", "issue-2", "issue-1"}},                       // cycles
+		0.5, // density
+		[]string{"issue-3", "issue-2", "issue-1"}, // topologicalOrder
 	)
 }
 

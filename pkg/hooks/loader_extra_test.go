@@ -26,4 +26,3 @@ func TestTruncateHelper(t *testing.T) {
 		t.Fatalf("truncate should limit length to 10, got %d", len(short))
 	}
 }
-

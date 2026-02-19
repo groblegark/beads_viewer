@@ -25,9 +25,9 @@ func (k CacheKey) String() string {
 
 // CacheEntry holds a cached report with metadata
 type CacheEntry struct {
-	Key       CacheKey
-	Report    *HistoryReport
-	CreatedAt time.Time
+	Key        CacheKey
+	Report     *HistoryReport
+	CreatedAt  time.Time
 	AccessedAt time.Time
 }
 
@@ -381,12 +381,12 @@ func (c *CachedCorrelator) CacheStats() CachedCorrelatorStats {
 	}
 
 	return CachedCorrelatorStats{
-		Hits:       hits,
-		Misses:     misses,
-		HitRate:    hitRate,
-		CacheSize:  cacheStats.Size,
-		MaxSize:    cacheStats.MaxSize,
-		MaxAge:     cacheStats.MaxAge,
+		Hits:      hits,
+		Misses:    misses,
+		HitRate:   hitRate,
+		CacheSize: cacheStats.Size,
+		MaxSize:   cacheStats.MaxSize,
+		MaxAge:    cacheStats.MaxAge,
 	}
 }
 

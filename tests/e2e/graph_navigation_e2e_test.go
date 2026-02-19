@@ -132,9 +132,9 @@ func TestGraphNavigationDepthLevels(t *testing.T) {
 		minNodes int
 		maxNodes int
 	}{
-		{"1", 2, 3},  // Root + immediate neighbors
-		{"2", 2, 4},  // Root + 2 levels
-		{"3", 3, 5},  // Root + 3 levels
+		{"1", 2, 3}, // Root + immediate neighbors
+		{"2", 2, 4}, // Root + 2 levels
+		{"3", 3, 5}, // Root + 3 levels
 	}
 
 	for _, tt := range depths {

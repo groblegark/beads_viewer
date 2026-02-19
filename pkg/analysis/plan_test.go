@@ -470,7 +470,7 @@ func TestGetExecutionPlanLegacyDependencyGrouping(t *testing.T) {
 	// Since A depends on B, they form a connected component.
 	// Therefore, B should appear in a track that represents this component.
 	// We verify that the tracks logic respects this legacy dependency grouping.
-	
+
 	// Scenario:
 	// X -> A (legacy). X -> B (legacy).
 	// X is the common ancestor/dependent.
@@ -483,7 +483,7 @@ func TestGetExecutionPlanLegacyDependencyGrouping(t *testing.T) {
 	// We get 1 track with {A, B}.
 	// If connection logic FAILS (ignoring legacy), we get {A}, {B}, {X}.
 	// We get 2 tracks: Track 1 {A}, Track 2 {B}.
-	
+
 	issues := []model.Issue{
 		{ID: "X", Title: "Common Root", Status: model.StatusClosed, Priority: 1},
 		{ID: "A", Title: "Task A", Status: model.StatusOpen, Priority: 1, Dependencies: []*model.Dependency{

@@ -187,9 +187,9 @@ func TestIssueItemDescriptionFormat(t *testing.T) {
 
 func TestIssueItemFilterValue(t *testing.T) {
 	tests := []struct {
-		name         string
-		item         ui.IssueItem
-		shouldContain []string
+		name             string
+		item             ui.IssueItem
+		shouldContain    []string
 		shouldNotContain []string
 	}{
 		{

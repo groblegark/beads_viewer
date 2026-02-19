@@ -36,12 +36,12 @@ type IssueFixture struct {
 
 // GeneratorConfig controls issue generation.
 type GeneratorConfig struct {
-	Seed           int64     // Random seed for determinism (0 = use current time)
-	IDPrefix       string    // Prefix for issue IDs (default: "TEST")
-	BaseTime       time.Time // Base time for timestamps (default: fixed time)
-	IncludeLabels  bool      // Generate random labels
-	IncludeMinutes bool      // Generate estimated_minutes
-	StatusMix      []model.Status // Status distribution (nil = all open)
+	Seed           int64             // Random seed for determinism (0 = use current time)
+	IDPrefix       string            // Prefix for issue IDs (default: "TEST")
+	BaseTime       time.Time         // Base time for timestamps (default: fixed time)
+	IncludeLabels  bool              // Generate random labels
+	IncludeMinutes bool              // Generate estimated_minutes
+	StatusMix      []model.Status    // Status distribution (nil = all open)
 	TypeMix        []model.IssueType // Type distribution (nil = all task)
 }
 
@@ -431,7 +431,7 @@ func (g *Generator) Ladder(length int) GraphFixture {
 
 		// Chain edges
 		if i > 0 {
-			edges = append(edges, [2]int{i - 1, i})                 // A chain
+			edges = append(edges, [2]int{i - 1, i})                   // A chain
 			edges = append(edges, [2]int{length + i - 1, length + i}) // B chain
 		}
 		// Rung edges (A depends on B at same level)

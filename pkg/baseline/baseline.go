@@ -45,14 +45,14 @@ type Baseline struct {
 
 // GraphStats contains basic graph statistics
 type GraphStats struct {
-	NodeCount     int     `json:"node_count"`
-	EdgeCount     int     `json:"edge_count"`
-	Density       float64 `json:"density"`
-	OpenCount     int     `json:"open_count"`
-	ClosedCount   int     `json:"closed_count"`
-	BlockedCount  int     `json:"blocked_count"`
-	CycleCount    int     `json:"cycle_count"`
-	ActionableCount int   `json:"actionable_count"`
+	NodeCount       int     `json:"node_count"`
+	EdgeCount       int     `json:"edge_count"`
+	Density         float64 `json:"density"`
+	OpenCount       int     `json:"open_count"`
+	ClosedCount     int     `json:"closed_count"`
+	BlockedCount    int     `json:"blocked_count"`
+	CycleCount      int     `json:"cycle_count"`
+	ActionableCount int     `json:"actionable_count"`
 }
 
 // TopMetrics stores top-N items for comparison

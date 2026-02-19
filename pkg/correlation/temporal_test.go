@@ -223,8 +223,8 @@ func TestCalculateTemporalConfidence(t *testing.T) {
 				Start:       now.Add(-12 * time.Hour),
 				End:         now,
 			},
-			files:     []FileChange{{Path: "pkg/auth/login.go"}},
-			pathHints: []string{"auth"},
+			files:      []FileChange{{Path: "pkg/auth/login.go"}},
+			pathHints:  []string{"auth"},
 			authActive: map[string]int{"dev@test.com": 2},
 			wantRange:  [2]float64{0.70, 0.85}, // base 0.50 + 0.10 (2 beads) + 0.05 (moderate) + 0.15 (path match)
 		},
@@ -246,12 +246,12 @@ func TestGenerateTemporalReason(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name             string
-		window           TemporalWindow
-		files            []FileChange
-		pathHints        []string
-		authActive       map[string]int
-		expectContains   []string
+		name           string
+		window         TemporalWindow
+		files          []FileChange
+		pathHints      []string
+		authActive     map[string]int
+		expectContains []string
 	}{
 		{
 			name: "basic reason",

@@ -133,12 +133,12 @@ func AllCacheStats() []CacheStats {
 
 // MemoryStats holds a snapshot of memory statistics.
 type MemoryStats struct {
-	HeapAllocMB   float64 `json:"heap_alloc_mb"`
-	HeapSysMB     float64 `json:"heap_sys_mb"`
-	HeapObjectsK  float64 `json:"heap_objects_k"`
-	GCCycles      uint32  `json:"gc_cycles"`
-	GCPauseMs     float64 `json:"gc_pause_ms"`
-	GoroutineCount int    `json:"goroutine_count"`
+	HeapAllocMB    float64 `json:"heap_alloc_mb"`
+	HeapSysMB      float64 `json:"heap_sys_mb"`
+	HeapObjectsK   float64 `json:"heap_objects_k"`
+	GCCycles       uint32  `json:"gc_cycles"`
+	GCPauseMs      float64 `json:"gc_pause_ms"`
+	GoroutineCount int     `json:"goroutine_count"`
 }
 
 // GetMemoryStats returns current memory statistics.
@@ -147,11 +147,11 @@ func GetMemoryStats() MemoryStats {
 	runtime.ReadMemStats(&m)
 
 	return MemoryStats{
-		HeapAllocMB:   float64(m.HeapAlloc) / (1024 * 1024),
-		HeapSysMB:     float64(m.HeapSys) / (1024 * 1024),
-		HeapObjectsK:  float64(m.HeapObjects) / 1000,
-		GCCycles:      m.NumGC,
-		GCPauseMs:     float64(m.PauseTotalNs) / 1e6,
+		HeapAllocMB:    float64(m.HeapAlloc) / (1024 * 1024),
+		HeapSysMB:      float64(m.HeapSys) / (1024 * 1024),
+		HeapObjectsK:   float64(m.HeapObjects) / 1000,
+		GCCycles:       m.NumGC,
+		GCPauseMs:      float64(m.PauseTotalNs) / 1e6,
 		GoroutineCount: runtime.NumGoroutine(),
 	}
 }

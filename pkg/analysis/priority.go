@@ -112,27 +112,13 @@ func (a *Analyzer) ComputeImpactScoresFromStats(stats *GraphStats, now time.Time
 		criticalPath = stats.CriticalPathScore()
 	}
 
-	// Precompute blocker counts directly from dependencies to avoid relying on graph direction nuances.
-	blockerCounts := make(map[string]int)
-	for id := range a.issueMap {
-		blockerCounts[id] = 0
-	}
-	for _, issue := range a.issueMap {
-		for _, dep := range issue.Dependencies {
-			if dep == nil || !dep.Type.IsBlocking() {
-				continue
-			}
-			if _, exists := a.issueMap[dep.DependsOnID]; !exists {
-				continue
-			}
-			blockerCounts[dep.DependsOnID]++
-		}
-	}
+	// Precomputed blocker counts (computed in NewAnalyzer for impact scoring).
+	blockerCounts := a.blockerCounts
+	maxBlockers := a.blockerCountsMax
 
 	// Find max values for normalization
 	maxPR := findMax(pageRank)
 	maxBW := findMax(betweenness)
-	maxBlockers := findMaxInt(blockerCounts)
 
 	// Compute median estimated minutes for issues without estimates
 	medianMinutes := a.computeMedianEstimatedMinutes()
@@ -149,7 +135,12 @@ func (a *Analyzer) ComputeImpactScoresFromStats(stats *GraphStats, now time.Time
 		// Normalize metrics to 0-1
 		prNorm := normalize(pageRank[id], maxPR)
 		bwNorm := normalize(betweenness[id], maxBW)
-		blockerNorm := normalizeInt(blockerCounts[id], maxBlockers)
+		blockerNorm := 0.0
+		if nodeID, ok := a.idToNode[id]; ok {
+			if nodeID >= 0 && int(nodeID) < len(blockerCounts) {
+				blockerNorm = normalizeInt(blockerCounts[nodeID], maxBlockers)
+			}
+		}
 		stalenessNorm := computeStaleness(issue.UpdatedAt, now)
 		priorityNorm := computePriorityBoost(issue.Priority)
 
@@ -309,17 +300,6 @@ func findMax(m map[string]float64) float64 {
 	return max
 }
 
-// findMaxInt finds the maximum int value in a map
-func findMaxInt(m map[string]int) int {
-	max := 0
-	for _, v := range m {
-		if v > max {
-			max = v
-		}
-	}
-	return max
-}
-
 // computeMedianEstimatedMinutes calculates the median estimated_minutes across all issues
 func (a *Analyzer) computeMedianEstimatedMinutes() int {
 	var estimates []int
@@ -424,6 +404,19 @@ func computeUrgency(issue *model.Issue, now time.Time) (float64, string) {
 
 	// Apply time decay: urgency increases as issue ages without resolution
 	// Uses exponential growth with half-life of UrgencyDecayDays
+	// Handle zero CreatedAt (unknown creation date)
+	if issue.CreatedAt.IsZero() {
+		// Unknown creation date - return moderate urgency based on labels only
+		if score > 1.0 {
+			score = 1.0
+		}
+		explanation := ""
+		if len(reasons) > 0 {
+			explanation = strings.Join(reasons, ", ")
+		}
+		return score, explanation
+	}
+
 	daysSinceCreated := now.Sub(issue.CreatedAt).Hours() / 24
 	if daysSinceCreated > 0 {
 		// Decay factor: 0.0 at creation, grows toward 0.5 max contribution

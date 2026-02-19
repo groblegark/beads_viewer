@@ -25,6 +25,12 @@ type WizardConfig struct {
 	Title          string `json:"title"`
 	Subtitle       string `json:"subtitle,omitempty"`
 
+	// Source metadata for reliable updates
+	SourceBeadsDir string `json:"source_beads_dir,omitempty"`
+	SourceRepoRoot string `json:"source_repo_root,omitempty"`
+	LastIssueCount int    `json:"last_issue_count,omitempty"`
+	LastDataHash   string `json:"last_data_hash,omitempty"`
+
 	// Deployment target
 	DeployTarget string `json:"deploy_target"` // "github", "cloudflare", "local"
 
@@ -724,6 +730,11 @@ func (w *Wizard) OfferPreview() (string, error) {
 
 // PerformDeploy deploys the bundle to the configured target.
 func (w *Wizard) PerformDeploy() (*WizardResult, error) {
+	return w.PerformDeployWithIssueCount(0)
+}
+
+// PerformDeployWithIssueCount deploys the bundle and verifies the expected issue count.
+func (w *Wizard) PerformDeployWithIssueCount(expectedIssueCount int) (*WizardResult, error) {
 	fmt.Println("Step 7: Deploy")
 	fmt.Println("────────────────────────────")
 
@@ -734,17 +745,53 @@ func (w *Wizard) PerformDeploy() (*WizardResult, error) {
 
 	switch w.config.DeployTarget {
 	case "github":
+		// Note: GitHub Actions workflow is already added by CopyEmbeddedAssets
+		// during the export phase, so we don't need to add it again here.
+
 		deployConfig := GitHubDeployConfig{
 			RepoName:         w.config.RepoName,
 			Private:          w.config.RepoPrivate,
 			Description:      w.config.RepoDescription,
 			BundlePath:       w.bundlePath,
-			SkipConfirmation: true,           // Already confirmed in wizard prerequisites
-			ForceOverwrite:   w.isUpdate,     // Auto-overwrite when updating existing deployment
+			SkipConfirmation: true,       // Already confirmed in wizard prerequisites
+			ForceOverwrite:   w.isUpdate, // Auto-overwrite when updating existing deployment
 		}
 
-		deployResult, err := DeployToGitHubPages(deployConfig)
+		// Use enhanced deployment with fallback
+		deployResult, err := DeployToGitHubPagesWithFallback(deployConfig, expectedIssueCount)
 		if err != nil {
+			// If GitHub deployment fails, offer Cloudflare as fallback
+			fmt.Printf("\n⚠ GitHub Pages deployment failed: %v\n", err)
+			fmt.Println("Would you like to try Cloudflare Pages instead?")
+
+			var tryCloudflare bool
+			form := newForm(
+				huh.NewGroup(
+					huh.NewConfirm().
+						Title("Try Cloudflare Pages as fallback?").
+						Value(&tryCloudflare).
+						Affirmative("Yes").
+						Negative("No"),
+				),
+			)
+			if formErr := form.Run(); formErr == nil && tryCloudflare {
+				// Switch to Cloudflare
+				cfConfig := CloudflareDeployConfig{
+					ProjectName:      SuggestProjectName(w.bundlePath),
+					BundlePath:       w.bundlePath,
+					Branch:           "main",
+					SkipConfirmation: true,
+				}
+				cfResult, cfErr := DeployToCloudflareWithAutoCreate(cfConfig, expectedIssueCount)
+				if cfErr != nil {
+					return nil, fmt.Errorf("cloudflare fallback also failed: %w", cfErr)
+				}
+				result.CloudflareProject = cfResult.ProjectName
+				result.CloudflareURL = cfResult.URL
+				result.PagesURL = cfResult.URL
+				result.DeployTarget = "cloudflare"
+				return result, nil
+			}
 			return nil, fmt.Errorf("deployment failed: %w", err)
 		}
 
@@ -752,6 +799,7 @@ func (w *Wizard) PerformDeploy() (*WizardResult, error) {
 		result.PagesURL = deployResult.PagesURL
 
 	case "cloudflare":
+		// Use enhanced deployment with auto-create
 		deployConfig := CloudflareDeployConfig{
 			ProjectName:      w.config.CloudflareProject,
 			BundlePath:       w.bundlePath,
@@ -759,7 +807,7 @@ func (w *Wizard) PerformDeploy() (*WizardResult, error) {
 			SkipConfirmation: true, // Already confirmed in prerequisites
 		}
 
-		deployResult, err := DeployToCloudflarePages(deployConfig)
+		deployResult, err := DeployToCloudflareWithAutoCreate(deployConfig, expectedIssueCount)
 		if err != nil {
 			return nil, fmt.Errorf("deployment failed: %w", err)
 		}

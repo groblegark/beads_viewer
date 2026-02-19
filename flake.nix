@@ -38,7 +38,7 @@
             ldflags = [
               "-s"
               "-w"
-              "-X github.com/Dicklesworthstone/beads_viewer/pkg/version.Version=v${version}"
+              "-X github.com/Dicklesworthstone/beads_viewer/pkg/version.version=v${version}"
             ];
 
             meta = with pkgs.lib; {

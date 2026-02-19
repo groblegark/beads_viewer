@@ -145,9 +145,9 @@ type InsightsModel struct {
 	topPicks []analysis.TopPick
 
 	// Priority radar data (bv-93) - full recommendations with breakdown
-	recommendations    []analysis.Recommendation
-	recommendationMap  map[string]*analysis.Recommendation // ID -> Recommendation for quick lookup
-	triageDataHash     string                              // Hash of data used for triage
+	recommendations   []analysis.Recommendation
+	recommendationMap map[string]*analysis.Recommendation // ID -> Recommendation for quick lookup
+	triageDataHash    string                              // Hash of data used for triage
 
 	// Navigation state
 	focusedPanel  MetricPanel
@@ -196,8 +196,8 @@ func NewInsightsModel(ins analysis.Insights, issueMap map[string]*model.Issue, t
 		insights:         ins,
 		issueMap:         issueMap,
 		theme:            theme,
-		showExplanations: true,  // Visible by default
-		showCalculation:  true,  // Always show calculation details
+		showExplanations: true, // Visible by default
+		showCalculation:  true, // Always show calculation details
 		showDetailPanel:  true,
 		mdRenderer:       mdRenderer,
 		detailVP:         vp,
@@ -1230,12 +1230,11 @@ func (m *InsightsModel) renderMiniBar(label string, value float64, width int, t 
 	return labelStyle.Render(prefix) + filledStyle.Render(filledBar) + emptyStyle.Render(emptyBar)
 }
 
-
 // renderPriorityItem renders a single priority recommendation item
 func (m *InsightsModel) renderPriorityItem(pick analysis.TopPick, width, height int, isSelected bool, t Theme) string {
 	itemStyle := t.Renderer.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		Width(width - 2).
+		Width(width-2).
 		Height(height).
 		Padding(0, 1)
 
@@ -1927,7 +1926,7 @@ func (m *InsightsModel) renderCalculationProofMD(selectedID string) string {
 
 func (m *InsightsModel) renderDetailPanel(width, height int, t Theme) string {
 	// Update viewport dimensions
-	vpWidth := width - 4  // Account for border
+	vpWidth := width - 4   // Account for border
 	vpHeight := height - 4 // Account for border and scroll hint
 	if vpWidth < 20 {
 		vpWidth = 20

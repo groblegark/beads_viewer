@@ -367,3 +367,123 @@ func TestWatcher_Path(t *testing.T) {
 		t.Errorf("expected path %s, got %s", absPath, w.Path())
 	}
 }
+
+func TestWatcher_PollInterval(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.jsonl")
+
+	if err := os.WriteFile(tmpFile, []byte("initial"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	customInterval := 500 * time.Millisecond
+	w, err := NewWatcher(tmpFile, WithPollInterval(customInterval))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := w.PollInterval(); got != customInterval {
+		t.Errorf("expected poll interval %v, got %v", customInterval, got)
+	}
+}
+
+func TestFilesystemType_String(t *testing.T) {
+	tests := []struct {
+		fsType   FilesystemType
+		expected string
+	}{
+		{FSTypeUnknown, "unknown"},
+		{FSTypeLocal, "local"},
+		{FSTypeNFS, "nfs"},
+		{FSTypeSMB, "smb"},
+		{FSTypeSSHFS, "sshfs"},
+		{FSTypeFUSE, "fuse"},
+		{FilesystemType(99), "unknown"}, // invalid type
+	}
+
+	for _, tc := range tests {
+		if got := tc.fsType.String(); got != tc.expected {
+			t.Errorf("FilesystemType(%d).String() = %q, expected %q", tc.fsType, got, tc.expected)
+		}
+	}
+}
+
+func TestEnvBool(t *testing.T) {
+	tests := []struct {
+		value    string
+		expected bool
+	}{
+		{"1", true},
+		{"true", true},
+		{"TRUE", true},
+		{"yes", true},
+		{"YES", true},
+		{"y", true},
+		{"Y", true},
+		{"on", true},
+		{"ON", true},
+		{"0", false},
+		{"false", false},
+		{"no", false},
+		{"", false},
+		{"invalid", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv("TEST_ENV_BOOL", tc.value)
+			if got := envBool("TEST_ENV_BOOL"); got != tc.expected {
+				t.Errorf("envBool(%q) = %v, expected %v", tc.value, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestEnvBool_Unset(t *testing.T) {
+	// Ensure the variable is not set
+	os.Unsetenv("TEST_UNSET_VAR")
+	if got := envBool("TEST_UNSET_VAR"); got != false {
+		t.Errorf("envBool for unset var = %v, expected false", got)
+	}
+}
+
+func TestDetectFilesystemType_EmptyPath(t *testing.T) {
+	if got := DetectFilesystemType(""); got != FSTypeUnknown {
+		t.Errorf("DetectFilesystemType(\"\") = %v, expected FSTypeUnknown", got)
+	}
+}
+
+func TestDetectFilesystemType_NonExistentPath(t *testing.T) {
+	// Should fall back to parent directory detection
+	tmpDir := t.TempDir()
+	nonExistent := filepath.Join(tmpDir, "does_not_exist.txt")
+	// Should not panic, should return some valid type
+	_ = DetectFilesystemType(nonExistent)
+}
+
+func TestWatcher_EnvForcePoll(t *testing.T) {
+	// Test BV_FORCE_POLL (alternative env var)
+	t.Setenv("BV_FORCE_POLL", "true")
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.jsonl")
+	if err := os.WriteFile(tmpFile, []byte("initial"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := NewWatcher(tmpFile,
+		WithDebounceDuration(10*time.Millisecond),
+		WithPollInterval(25*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	if !w.IsPolling() {
+		t.Fatal("expected watcher to be in polling mode when BV_FORCE_POLL is set")
+	}
+}

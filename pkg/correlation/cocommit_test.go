@@ -242,7 +242,7 @@ func TestCalculateConfidence(t *testing.T) {
 				BeadID:    "bv-123",
 				CommitMsg: "refactor: big change",
 			},
-			files: make([]FileChange, 25), // >20 files
+			files:     make([]FileChange, 25), // >20 files
 			wantRange: [2]float64{0.84, 0.86}, // 0.95 - 0.10 = 0.85
 		},
 		{
@@ -446,12 +446,12 @@ func TestExtractNewPath_DoubleSlashBug(t *testing.T) {
 	// Git output for renaming "pkg/old/file.go" to "pkg/file.go"
 	// is "pkg/{old => }/file.go"
 	input := "pkg/{old => }/file.go"
-	
+
 	// We expect "pkg/file.go"
 	expected := "pkg/file.go"
-	
+
 	got := extractNewPath(input)
-	
+
 	if got != expected {
 		t.Errorf("extractNewPath(%q) = %q; want %q", input, got, expected)
 	}

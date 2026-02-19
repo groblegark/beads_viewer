@@ -64,8 +64,8 @@ func TestDetectCycleWarnings_SimpleCycle(t *testing.T) {
 		if sug.ActionCommand == "" {
 			t.Error("expected action command to be set")
 		}
-		if !strings.Contains(sug.ActionCommand, "bd dep remove") {
-			t.Errorf("expected action to contain 'bd dep remove', got %s", sug.ActionCommand)
+		if !strings.Contains(sug.ActionCommand, "br dep remove") {
+			t.Errorf("expected action to contain 'br dep remove', got %s", sug.ActionCommand)
 		}
 	}
 }

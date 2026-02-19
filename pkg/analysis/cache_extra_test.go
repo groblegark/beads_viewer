@@ -22,4 +22,3 @@ func TestCacheSetTTLAndHash(t *testing.T) {
 		t.Fatalf("expected cache miss after expired TTL")
 	}
 }
-

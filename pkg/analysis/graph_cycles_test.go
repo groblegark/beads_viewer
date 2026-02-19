@@ -137,7 +137,7 @@ func TestFindCyclesSafe_SortedByLength(t *testing.T) {
 	// Short cycle: 0 -> 1 -> 0 (length 2)
 	// Long cycle: 2 -> 3 -> 4 -> 5 -> 2 (length 4)
 	g := buildTestGraph(6, [][2]int{
-		{0, 1}, {1, 0},             // 2-cycle
+		{0, 1}, {1, 0}, // 2-cycle
 		{2, 3}, {3, 4}, {4, 5}, {5, 2}, // 4-cycle
 	})
 

@@ -9,11 +9,11 @@ import (
 // MarkdownRenderer provides theme-aware markdown rendering using glamour.
 // It detects the terminal's color scheme and uses appropriate styles.
 type MarkdownRenderer struct {
-	renderer  *glamour.TermRenderer
-	width     int
-	isDark    bool
-	theme     *Theme // nil if using built-in styles, non-nil if using custom theme
-	useTheme  bool   // true if created with NewMarkdownRendererWithTheme
+	renderer *glamour.TermRenderer
+	width    int
+	isDark   bool
+	theme    *Theme // nil if using built-in styles, non-nil if using custom theme
+	useTheme bool   // true if created with NewMarkdownRendererWithTheme
 }
 
 // NewMarkdownRenderer creates a new markdown renderer using built-in styles.
@@ -175,15 +175,17 @@ func buildStyleFromTheme(theme Theme, isDark bool) ansi.StyleConfig {
 	mutedColor := extractHex(theme.Muted, isDark)
 	blockedColor := extractHex(theme.Blocked, isDark)
 
-	// Base document style - Dracula dark background or transparent for light mode
-	var docBgPtr *string
+	// Base document style - use terminal default background for both modes.
+	// Previously dark mode set an explicit Dracula background (#282a36), but
+	// terminals that remap ANSI color slots (e.g., Solarized Dark) could
+	// render it as vivid green (ANSI #2) when the hex value is downconverted
+	// to the 16-color palette. Using nil lets the terminal's own background
+	// show through, which is correct for every theme. (fixes #101)
+	var docBgPtr *string // nil = terminal default background
 	var docFg string
 	if isDark {
-		docBg := "#282a36"
-		docBgPtr = &docBg
 		docFg = "#f8f8f2"
 	} else {
-		docBgPtr = nil // No background for light mode (use terminal default)
 		docFg = "#000000"
 	}
 
@@ -286,7 +288,8 @@ func buildStyleFromTheme(theme Theme, isDark bool) ansi.StyleConfig {
 			BlockPrefix: "• ",
 		},
 		Enumeration: ansi.StylePrimitive{
-			Color: stringPtr(inProgressColor),
+			Color:       stringPtr(inProgressColor),
+			BlockPrefix: ". ",
 		},
 		Task: ansi.StyleTask{
 			Ticked:   "[✓] ",

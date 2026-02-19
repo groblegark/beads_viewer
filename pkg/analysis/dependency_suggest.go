@@ -70,7 +70,7 @@ func DetectMissingDependencies(issues []model.Issue, config DependencySuggestion
 	issueLabels := make(map[int]map[string]bool, len(issues))
 	// existingDeps maps to set for fast check
 	existingDeps := make(map[int]map[int]bool, len(issues))
-	
+
 	// index[keyword] -> list of issue indices
 	index := make(map[string][]int)
 
@@ -78,7 +78,7 @@ func DetectMissingDependencies(issues []model.Issue, config DependencySuggestion
 		// Keywords
 		kws := extractKeywords(issues[i].Title, issues[i].Description)
 		keywords[i] = kws
-		
+
 		// Only index if we have enough keywords to possibly match
 		if len(kws) >= config.MinKeywordOverlap {
 			for _, w := range kws {
@@ -94,7 +94,7 @@ func DetectMissingDependencies(issues []model.Issue, config DependencySuggestion
 		issueLabels[i] = lbls
 
 		// Existing Deps (store indices for speed)
-		// We need a way to map ID -> Index. 
+		// We need a way to map ID -> Index.
 		// Since we iterate by index, let's build ID map first.
 	}
 
@@ -241,7 +241,7 @@ func DetectMissingDependencies(issues []model.Issue, config DependencySuggestion
 			match.Reason,
 			match.Confidence,
 		).WithRelatedBead(match.To).
-			WithAction(fmt.Sprintf("bd dep add %s %s", match.From, match.To)).
+			WithAction(fmt.Sprintf("br dep add %s %s", match.From, match.To)).
 			WithMetadata("shared_keywords", match.SharedKeywords)
 
 		if len(match.SharedLabels) > 0 {

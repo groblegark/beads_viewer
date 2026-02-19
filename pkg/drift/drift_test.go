@@ -1324,11 +1324,11 @@ func TestCheckBlocked_StrictThresholds(t *testing.T) {
 		curCount  int
 		wantAlert bool
 	}{
-		{"threshold 0, delta 0", 0, 5, false},  // Should NOT alert (fixed bug)
-		{"threshold 0, delta 1", 0, 6, true},   // Should alert (any increase)
-		{"threshold 5, delta 4", 5, 9, false},  // Should not alert (below threshold)
-		{"threshold 5, delta 5", 5, 10, true},  // Should alert (at threshold)
-		{"threshold 5, delta 0", 5, 5, false},  // Should not alert
+		{"threshold 0, delta 0", 0, 5, false}, // Should NOT alert (fixed bug)
+		{"threshold 0, delta 1", 0, 6, true},  // Should alert (any increase)
+		{"threshold 5, delta 4", 5, 9, false}, // Should not alert (below threshold)
+		{"threshold 5, delta 5", 5, 10, true}, // Should alert (at threshold)
+		{"threshold 5, delta 0", 5, 5, false}, // Should not alert
 	}
 
 	for _, tt := range tests {

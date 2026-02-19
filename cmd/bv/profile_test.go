@@ -115,8 +115,8 @@ func TestPrintDiffSummaryAndRepeatChar(t *testing.T) {
 		ClosedIssues:   []model.Issue{{ID: "B", Title: "Closed"}},
 		ReopenedIssues: []model.Issue{{ID: "C", Title: "Reopened"}},
 		ModifiedIssues: []analysis.ModifiedIssue{{IssueID: "D", Title: "Mod", Changes: []analysis.FieldChange{{Field: "status", OldValue: "open", NewValue: "closed"}}}},
-		NewCycles:     [][]string{{"X", "Y"}},
-		MetricDeltas: analysis.MetricDeltas{TotalIssues: 1, OpenIssues: -1, BlockedIssues: 2, CycleCount: 1},
+		NewCycles:      [][]string{{"X", "Y"}},
+		MetricDeltas:   analysis.MetricDeltas{TotalIssues: 1, OpenIssues: -1, BlockedIssues: 2, CycleCount: 1},
 	}
 	out := captureStdout(t, func() {
 		printDiffSummary(diff, "HEAD~1")

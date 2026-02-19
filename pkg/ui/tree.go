@@ -176,16 +176,16 @@ type IssueTreeNode struct {
 
 // TreeModel manages the hierarchical tree view state
 type TreeModel struct {
-	roots    []*IssueTreeNode           // Root nodes (issues with no parent)
-	flatList []*IssueTreeNode           // Flattened visible nodes for navigation
-	cursor   int                        // Current selection index in flatList
-	viewport viewport.Model             // For scrolling
-	theme    Theme                      // Visual styling
-	mode     TreeViewMode               // Hierarchy vs blocking
-	issueMap map[string]*IssueTreeNode  // Quick lookup by issue ID
-	width          int                  // Available width
-	height         int                  // Available height
-	viewportOffset int                  // Index of first visible node (bv-r4ng)
+	roots          []*IssueTreeNode          // Root nodes (issues with no parent)
+	flatList       []*IssueTreeNode          // Flattened visible nodes for navigation
+	cursor         int                       // Current selection index in flatList
+	viewport       viewport.Model            // For scrolling
+	theme          Theme                     // Visual styling
+	mode           TreeViewMode              // Hierarchy vs blocking
+	issueMap       map[string]*IssueTreeNode // Quick lookup by issue ID
+	width          int                       // Available width
+	height         int                       // Available height
+	viewportOffset int                       // Index of first visible node (bv-r4ng)
 
 	// Build state
 	built    bool   // Has tree been built?
@@ -546,7 +546,7 @@ func (t *TreeModel) renderEmptyState() string {
 	sb.WriteString("\n\n")
 	sb.WriteString(mutedStyle.Render("To create hierarchy, add parent-child dependencies:"))
 	sb.WriteString("\n")
-	sb.WriteString(mutedStyle.Render("  bd dep add <child> parent-child:<parent>"))
+	sb.WriteString(mutedStyle.Render("  br dep add <child> parent-child:<parent>"))
 	sb.WriteString("\n\n")
 	sb.WriteString(mutedStyle.Render("Press E to return to list view."))
 

@@ -527,12 +527,12 @@ func TestVelocityInvariance_WeekBucketing(t *testing.T) {
 	now := time.Date(2025, 12, 16, 12, 0, 0, 0, time.UTC)
 
 	// Close one issue on each of the past 3 Mondays
-	monday1 := now                                   // Week of Dec 15 (current week)
-	monday2 := now.Add(-7 * 24 * time.Hour)          // Week of Dec 8
-	monday3 := now.Add(-14 * 24 * time.Hour)         // Week of Dec 1
-	closedMon1 := monday1.Add(-1 * 24 * time.Hour)   // Sunday Dec 15 (same ISO week as Dec 16)
-	closedMon2 := monday2.Add(2 * 24 * time.Hour)    // Wednesday Dec 10
-	closedMon3 := monday3.Add(4 * 24 * time.Hour)    // Friday Dec 5
+	monday1 := now                                 // Week of Dec 15 (current week)
+	monday2 := now.Add(-7 * 24 * time.Hour)        // Week of Dec 8
+	monday3 := now.Add(-14 * 24 * time.Hour)       // Week of Dec 1
+	closedMon1 := monday1.Add(-1 * 24 * time.Hour) // Sunday Dec 15 (same ISO week as Dec 16)
+	closedMon2 := monday2.Add(2 * 24 * time.Hour)  // Wednesday Dec 10
+	closedMon3 := monday3.Add(4 * 24 * time.Hour)  // Friday Dec 5
 
 	issues := []model.Issue{
 		{ID: "w1", Status: model.StatusClosed, CreatedAt: now.Add(-30 * 24 * time.Hour), ClosedAt: &closedMon1},

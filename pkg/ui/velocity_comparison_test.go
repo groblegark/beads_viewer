@@ -153,10 +153,10 @@ func TestVelocityComparisonWithData(t *testing.T) {
 
 func TestBuildSparkline(t *testing.T) {
 	tests := []struct {
-		name     string
-		values   []int
-		maxVal   int
-		wantLen  int
+		name    string
+		values  []int
+		maxVal  int
+		wantLen int
 	}{
 		{
 			name:    "empty values",

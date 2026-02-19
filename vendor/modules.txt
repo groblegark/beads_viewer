@@ -1,6 +1,9 @@
 # git.sr.ht/~sbinet/gg v0.7.0
 ## explicit; go 1.24
 git.sr.ht/~sbinet/gg
+# github.com/Dicklesworthstone/toon-go v0.0.0-20260124164058-e044b09590e8
+## explicit; go 1.21
+github.com/Dicklesworthstone/toon-go
 # github.com/ajstarks/svgo v0.0.0-20211024235047-1546f124cd8b
 ## explicit; go 1.15
 github.com/ajstarks/svgo
@@ -169,6 +172,9 @@ github.com/rivo/uniseg
 # github.com/sahilm/fuzzy v0.1.1
 ## explicit
 github.com/sahilm/fuzzy
+# github.com/spf13/pflag v1.0.10
+## explicit; go 1.12
+github.com/spf13/pflag
 # github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e
 ## explicit; go 1.19
 github.com/xo/terminfo

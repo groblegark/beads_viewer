@@ -9,7 +9,6 @@ import (
 
 	"gonum.org/v1/gonum/graph"
 	"gonum.org/v1/gonum/graph/network"
-	"gonum.org/v1/gonum/graph/simple"
 )
 
 type denseIndex struct {
@@ -37,7 +36,7 @@ type cachedAdjacency struct {
 	incoming [][]int
 }
 
-func buildCachedAdjacency(g *simple.DirectedGraph, idx denseIndex) cachedAdjacency {
+func buildCachedAdjacency(g graph.Directed, idx denseIndex) cachedAdjacency {
 	nodeCount := len(idx.idxToID)
 	outgoing := make([][]int, nodeCount)
 	incoming := make([][]int, nodeCount)
@@ -268,7 +267,7 @@ type BetweennessResult struct {
 // References:
 //   - "A Faster Algorithm for Betweenness Centrality" (Brandes, 2001)
 //   - "Approximating Betweenness Centrality" (Bader et al., 2007)
-func ApproxBetweenness(g *simple.DirectedGraph, sampleSize int, seed int64) BetweennessResult {
+func ApproxBetweenness(g graph.Directed, sampleSize int, seed int64) BetweennessResult {
 	start := time.Now()
 	nodes := pooledNodesOf(g.Nodes())
 	defer putPooledNodes(nodes)
@@ -414,9 +413,10 @@ func singleSourceBetweennessDense(adj cachedAdjacency, sourceIdx int, buf *brand
 	buf.queue = append(buf.queue, sourceIdx)
 
 	// BFS phase
-	for len(buf.queue) > 0 {
-		v := buf.queue[0]
-		buf.queue = buf.queue[1:]
+	head := 0
+	for head < len(buf.queue) {
+		v := buf.queue[head]
+		head++
 		buf.stack = append(buf.stack, v)
 
 		for _, w := range adj.outgoing[v] {

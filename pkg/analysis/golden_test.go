@@ -12,9 +12,9 @@ import (
 
 // TestGraphFile represents a test graph file format.
 type TestGraphFile struct {
-	Description string     `json:"description"`
-	Nodes       []string   `json:"nodes"`
-	Edges       [][]int    `json:"edges"`
+	Description string   `json:"description"`
+	Nodes       []string `json:"nodes"`
+	Edges       [][]int  `json:"edges"`
 }
 
 // GoldenMetrics represents the expected metrics for a graph.

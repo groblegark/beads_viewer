@@ -80,7 +80,9 @@ func (e *SQLiteExporter) Export(outputDir string) error {
 	dbPath := filepath.Join(outputDir, "beads.sqlite3")
 
 	// Remove existing database if present
-	_ = os.Remove(dbPath)
+	if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove existing database: %w", err)
+	}
 
 	// Open database
 	db, err := sql.Open("sqlite", dbPath)
@@ -288,8 +290,11 @@ func (e *SQLiteExporter) insertComments(db *sql.DB) error {
 			if comment == nil {
 				continue
 			}
+			// Use composite ID (issue_id:comment_id) to avoid UNIQUE constraint
+			// violations when exporting workspaces with multiple repos (bv-76)
+			compositeID := fmt.Sprintf("%s:%d", issue.ID, comment.ID)
 			_, err := stmt.Exec(
-				comment.ID,
+				compositeID,
 				issue.ID,
 				comment.Author,
 				comment.Text,
@@ -518,33 +523,39 @@ func (e *SQLiteExporter) chunkIfNeeded(outputDir, dbPath string) error {
 		TotalSize: info.Size(),
 	}
 
-	if info.Size() < e.Config.ChunkThreshold {
-		config.Chunked = false
-		return writeJSON(filepath.Join(outputDir, "beads.sqlite3.config.json"), config)
-	}
-
-	// Chunk the database
-	chunksDir := filepath.Join(outputDir, "chunks")
-	if err := os.MkdirAll(chunksDir, 0755); err != nil {
-		return fmt.Errorf("create chunks dir: %w", err)
-	}
-
+	// Always compute hash for cache invalidation (bv-pages-cache-fix)
+	// The hash is used by viewer.js OPFS caching to determine if cached data is stale.
+	// Without this, all deployments use the same "default" cache key and old data persists.
 	f, err := os.Open(dbPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("open database for hashing: %w", err)
 	}
-	defer f.Close()
 
-	// Calculate file hash
 	hasher := sha256.New()
 	if _, err := io.Copy(hasher, f); err != nil {
+		f.Close()
 		return fmt.Errorf("hash database: %w", err)
 	}
 	config.Hash = hex.EncodeToString(hasher.Sum(nil))
 
-	// Reset file position
+	if info.Size() < e.Config.ChunkThreshold {
+		f.Close()
+		config.Chunked = false
+		return writeJSON(filepath.Join(outputDir, "beads.sqlite3.config.json"), config)
+	}
+
+	// Reset file position for chunking
 	if _, err := f.Seek(0, 0); err != nil {
-		return err
+		f.Close()
+		return fmt.Errorf("seek database for chunking: %w", err)
+	}
+
+	// Chunk the database (file f is already open and seeked to start)
+	defer f.Close()
+
+	chunksDir := filepath.Join(outputDir, "chunks")
+	if err := os.MkdirAll(chunksDir, 0755); err != nil {
+		return fmt.Errorf("create chunks dir: %w", err)
 	}
 
 	// Split into chunks

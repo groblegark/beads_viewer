@@ -50,7 +50,7 @@ func TestFindJSONLPath_NoJSONLFiles(t *testing.T) {
 	}
 }
 
-func TestFindJSONLPath_PrefersIssuesJSONL(t *testing.T) {
+func TestFindJSONLPath_PrefersBeadsJSONL(t *testing.T) {
 	dir := t.TempDir()
 	// Create multiple JSONL files
 	os.WriteFile(filepath.Join(dir, "issues.jsonl"), []byte(`{"id":"1"}`), 0644)
@@ -61,25 +61,25 @@ func TestFindJSONLPath_PrefersIssuesJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	// Per beads upstream, issues.jsonl is canonical
-	if filepath.Base(path) != "issues.jsonl" {
-		t.Errorf("Expected issues.jsonl to be preferred (canonical per beads upstream), got: %s", path)
+	// Per bv-96, beads.jsonl is canonical (matches what bd writes in stealth mode)
+	if filepath.Base(path) != "beads.jsonl" {
+		t.Errorf("Expected beads.jsonl to be preferred (matches bd stealth mode), got: %s", path)
 	}
 }
 
-func TestFindJSONLPath_FallsBackToBeadsJSONL(t *testing.T) {
+func TestFindJSONLPath_FallsBackToIssuesJSONL(t *testing.T) {
 	dir := t.TempDir()
-	// Create beads.jsonl only (no issues.jsonl)
-	os.WriteFile(filepath.Join(dir, "beads.jsonl"), []byte(`{"id":"1"}`), 0644)
+	// Create issues.jsonl only (no beads.jsonl)
+	os.WriteFile(filepath.Join(dir, "issues.jsonl"), []byte(`{"id":"1"}`), 0644)
 	os.WriteFile(filepath.Join(dir, "other.jsonl"), []byte(`{"id":"2"}`), 0644)
 
 	path, err := loader.FindJSONLPath(dir)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	// beads.jsonl is second priority after issues.jsonl
-	if filepath.Base(path) != "beads.jsonl" {
-		t.Errorf("Expected beads.jsonl as fallback, got: %s", path)
+	// issues.jsonl is second priority after beads.jsonl (bv-96)
+	if filepath.Base(path) != "issues.jsonl" {
+		t.Errorf("Expected issues.jsonl as fallback, got: %s", path)
 	}
 }
 
@@ -99,9 +99,9 @@ func TestFindJSONLPath_FallsBackToBeadsBase(t *testing.T) {
 	}
 }
 
-func TestFindJSONLPath_FallsBackToIssues(t *testing.T) {
+func TestFindJSONLPath_OnlyIssuesJSONL(t *testing.T) {
 	dir := t.TempDir()
-	// Create only issues.jsonl
+	// Create only issues.jsonl (beads.jsonl not present)
 	os.WriteFile(filepath.Join(dir, "issues.jsonl"), []byte(`{"id":"1"}`), 0644)
 
 	path, err := loader.FindJSONLPath(dir)
@@ -202,8 +202,8 @@ func TestFindJSONLPathWithWarnings_ReportsMergeArtifacts(t *testing.T) {
 	if !strings.Contains(warnings[0], "beads.left.jsonl") {
 		t.Errorf("Warning should mention beads.left.jsonl: %s", warnings[0])
 	}
-	if !strings.Contains(warnings[0], "bd clean") {
-		t.Errorf("Warning should suggest 'bd clean': %s", warnings[0])
+	if !strings.Contains(warnings[0], "br clean") {
+		t.Errorf("Warning should suggest 'br clean': %s", warnings[0])
 	}
 }
 
@@ -994,11 +994,19 @@ func TestGetBeadsDir_EmptyRepoPath_UsesCwd(t *testing.T) {
 		}
 	}()
 
-	cwd, err := os.Getwd()
+	// Use a temp directory outside git to test pure cwd fallback behavior
+	// (within a git repo, GetBeadsDir now intelligently finds .beads in the repo root)
+	tmpDir := t.TempDir()
+	oldCwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("Failed to get cwd: %v", err)
 	}
-	expected := filepath.Join(cwd, ".beads")
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to chdir to temp: %v", err)
+	}
+	defer os.Chdir(oldCwd)
+
+	expected := filepath.Join(tmpDir, ".beads")
 
 	result, err := loader.GetBeadsDir("")
 	if err != nil {
@@ -1030,5 +1038,38 @@ func TestGetBeadsDir_EnvVarEmpty_FallsBack(t *testing.T) {
 	}
 	if result != expected {
 		t.Errorf("Empty BEADS_DIR should fallback: got %s, want %s", result, expected)
+	}
+}
+
+func TestGetBeadsDir_FindsBeadsInGitRepo(t *testing.T) {
+	// Unset environment variable
+	oldVal := os.Getenv(loader.BeadsDirEnvVar)
+	os.Unsetenv(loader.BeadsDirEnvVar)
+	defer func() {
+		if oldVal != "" {
+			os.Setenv(loader.BeadsDirEnvVar, oldVal)
+		}
+	}()
+
+	// When running from a subdirectory within a git repo that has .beads,
+	// GetBeadsDir should find .beads in the repo root (even via symlinks/worktrees)
+
+	result, err := loader.GetBeadsDir("")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Verify the returned path exists and is a directory
+	info, err := os.Stat(result)
+	if err != nil {
+		t.Fatalf("Returned beads dir does not exist: %s, error: %v", result, err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("Returned beads dir is not a directory: %s", result)
+	}
+
+	// Verify the path ends with .beads
+	if filepath.Base(result) != ".beads" {
+		t.Errorf("Returned path should end with .beads: got %s", result)
 	}
 }

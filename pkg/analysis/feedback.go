@@ -32,19 +32,19 @@ type WeightAdjustment struct {
 
 // FeedbackData holds all feedback information for a repository
 type FeedbackData struct {
-	Version     string              `json:"version"`
-	CreatedAt   time.Time           `json:"created_at"`
-	UpdatedAt   time.Time           `json:"updated_at"`
-	Events      []FeedbackEvent     `json:"events"`
-	Adjustments []WeightAdjustment  `json:"adjustments"`
-	Stats       FeedbackStats       `json:"stats"`
-	mu          sync.RWMutex        `json:"-"`
+	Version     string             `json:"version"`
+	CreatedAt   time.Time          `json:"created_at"`
+	UpdatedAt   time.Time          `json:"updated_at"`
+	Events      []FeedbackEvent    `json:"events"`
+	Adjustments []WeightAdjustment `json:"adjustments"`
+	Stats       FeedbackStats      `json:"stats"`
+	mu          sync.RWMutex       `json:"-"`
 }
 
 // FeedbackStats tracks aggregate feedback metrics
 type FeedbackStats struct {
-	TotalAccepted int     `json:"total_accepted"`
-	TotalIgnored  int     `json:"total_ignored"`
+	TotalAccepted  int     `json:"total_accepted"`
+	TotalIgnored   int     `json:"total_ignored"`
 	AvgAcceptScore float64 `json:"avg_accept_score"`
 	AvgIgnoreScore float64 `json:"avg_ignore_score"`
 }
@@ -305,15 +305,15 @@ func (f *FeedbackData) Summary() string {
 
 // FeedbackJSON returns the feedback data formatted for robot output
 type FeedbackJSON struct {
-	Enabled          bool               `json:"enabled"`
-	TotalEvents      int                `json:"total_events"`
-	AcceptedCount    int                `json:"accepted_count"`
-	IgnoredCount     int                `json:"ignored_count"`
-	AvgAcceptScore   float64            `json:"avg_accept_score"`
-	AvgIgnoreScore   float64            `json:"avg_ignore_score"`
+	Enabled           bool               `json:"enabled"`
+	TotalEvents       int                `json:"total_events"`
+	AcceptedCount     int                `json:"accepted_count"`
+	IgnoredCount      int                `json:"ignored_count"`
+	AvgAcceptScore    float64            `json:"avg_accept_score"`
+	AvgIgnoreScore    float64            `json:"avg_ignore_score"`
 	WeightAdjustments map[string]float64 `json:"weight_adjustments"`
-	EffectiveWeights map[string]float64 `json:"effective_weights"`
-	UpdatedAt        time.Time          `json:"updated_at"`
+	EffectiveWeights  map[string]float64 `json:"effective_weights"`
+	UpdatedAt         time.Time          `json:"updated_at"`
 }
 
 // ToJSON returns feedback data formatted for robot output

@@ -13,7 +13,7 @@ func TestHistoryModel_PreserveSelection(t *testing.T) {
 	// bv-1 (2 commits)
 	// bv-3 (2 commits)
 	// bv-2 (1 commit)
-	
+
 	// Select "bv-3" (should be index 1)
 	h.selectedBead = 1
 	selectedID := h.SelectedBeadID()
@@ -32,7 +32,7 @@ func TestHistoryModel_PreserveSelection(t *testing.T) {
 	// bv-3 (2 commits)
 	// bv-2 (1 commit)
 	// bv-3 should be index 0 now
-	
+
 	if h.SelectedBeadID() != "bv-3" {
 		t.Errorf("selection lost after filter: ID=%s, want bv-3", h.SelectedBeadID())
 	}

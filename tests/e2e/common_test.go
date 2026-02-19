@@ -427,15 +427,15 @@ type TestFixture struct {
 }
 
 type fixtureIssue struct {
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
-	Description string   `json:"description,omitempty"`
-	Status      string   `json:"status"`
-	Priority    int      `json:"priority"`
-	IssueType   string   `json:"issue_type"`
-	Labels      []string `json:"labels,omitempty"`
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	Description  string   `json:"description,omitempty"`
+	Status       string   `json:"status"`
+	Priority     int      `json:"priority"`
+	IssueType    string   `json:"issue_type"`
+	Labels       []string `json:"labels,omitempty"`
 	Dependencies []string `json:"dependencies,omitempty"`
-	CreatedAt   string   `json:"created_at"`
+	CreatedAt    string   `json:"created_at"`
 }
 
 // NewTestFixture creates a new test fixture with a temporary directory.

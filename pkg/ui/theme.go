@@ -1,8 +1,39 @@
 package ui
 
 import (
+	"os"
+
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// TermProfile holds the detected terminal color profile. Computed once at
+// package init so every style helper can branch without re-detecting.
+var TermProfile colorprofile.Profile
+
+func init() {
+	TermProfile = colorprofile.Detect(os.Stdout, os.Environ())
+}
+
+// ThemeBg returns the given hex color for TrueColor terminals and
+// lipgloss.NoColor{} otherwise, so 16/256-color terminals use the
+// terminal's own background instead of a down-converted approximation
+// that may clash with palettes like Solarized.
+func ThemeBg(hex string) lipgloss.TerminalColor {
+	if TermProfile < colorprofile.TrueColor {
+		return lipgloss.NoColor{}
+	}
+	return lipgloss.Color(hex)
+}
+
+// ThemeFg returns the given hex color for ANSI256+ terminals and a safe
+// ANSI white (color 7) for 16-color or lower terminals.
+func ThemeFg(hex string) lipgloss.TerminalColor {
+	if TermProfile < colorprofile.ANSI256 {
+		return lipgloss.ANSIColor(7)
+	}
+	return lipgloss.Color(hex)
+}
 
 type Theme struct {
 	Renderer *lipgloss.Renderer
@@ -107,11 +138,11 @@ func DefaultTheme(r *lipgloss.Renderer) Theme {
 	t.InfoBold = r.NewStyle().Foreground(ColorInfo).Bold(true)
 	t.SecondaryText = r.NewStyle().Foreground(t.Secondary)
 	t.PrimaryBold = r.NewStyle().Foreground(t.Primary).Bold(true)
-	t.PriorityUpArrow = r.NewStyle().Foreground(lipgloss.Color("#FF6B6B")).Bold(true)
-	t.PriorityDownArrow = r.NewStyle().Foreground(lipgloss.Color("#4ECDC4")).Bold(true)
-	t.TriageStar = r.NewStyle().Foreground(lipgloss.Color("#FFD700"))
-	t.TriageUnblocks = r.NewStyle().Foreground(lipgloss.Color("#50FA7B"))
-	t.TriageUnblocksAlt = r.NewStyle().Foreground(lipgloss.Color("#6272A4"))
+	t.PriorityUpArrow = r.NewStyle().Foreground(ThemeFg("#FF6B6B")).Bold(true)
+	t.PriorityDownArrow = r.NewStyle().Foreground(ThemeFg("#4ECDC4")).Bold(true)
+	t.TriageStar = r.NewStyle().Foreground(ThemeFg("#FFD700"))
+	t.TriageUnblocks = r.NewStyle().Foreground(ThemeFg("#50FA7B"))
+	t.TriageUnblocksAlt = r.NewStyle().Foreground(ThemeFg("#6272A4"))
 
 	return t
 }
@@ -149,4 +180,3 @@ func (t Theme) GetTypeIcon(typ string) (string, lipgloss.AdaptiveColor) {
 		return "•", t.Subtext
 	}
 }
-

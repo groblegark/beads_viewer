@@ -7,8 +7,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-
-
 // RenderSparkline creates a textual bar chart of value (0.0 - 1.0)
 func RenderSparkline(val float64, width int) string {
 	if width <= 0 {
@@ -16,7 +14,7 @@ func RenderSparkline(val float64, width int) string {
 	}
 
 	chars := []string{" ", "▂", "▃", "▄", "▅", "▆", "▇", "█"}
-	
+
 	if math.IsNaN(val) {
 		val = 0
 	}
@@ -74,20 +72,25 @@ func GetHeatmapColor(score float64, t Theme) lipgloss.TerminalColor {
 }
 
 // HeatmapGradientColors defines the color gradient for enhanced heatmap (bv-t4yg)
-// Ordered from cold (low count) to hot (high count)
-var HeatmapGradientColors = []lipgloss.Color{
-	lipgloss.Color("#1a1a2e"), // 0: dark blue/gray - empty
-	lipgloss.Color("#16213e"), // 1: navy - very few
-	lipgloss.Color("#0f4c75"), // 2: blue - few
-	lipgloss.Color("#3282b8"), // 3: light blue - some
-	lipgloss.Color("#bbe1fa"), // 4: pale blue - moderate (transition)
-	lipgloss.Color("#f7dc6f"), // 5: gold - above average
-	lipgloss.Color("#e94560"), // 6: coral - many
-	lipgloss.Color("#ff2e63"), // 7: hot pink/red - hot
+// Ordered from cold (low count) to hot (high count).
+// Uses ThemeFg so 16-color terminals fall back to ANSI white.
+var HeatmapGradientColors []lipgloss.TerminalColor
+
+func init() {
+	HeatmapGradientColors = []lipgloss.TerminalColor{
+		ThemeFg("#1a1a2e"), // 0: dark blue/gray - empty
+		ThemeFg("#16213e"), // 1: navy - very few
+		ThemeFg("#0f4c75"), // 2: blue - few
+		ThemeFg("#3282b8"), // 3: light blue - some
+		ThemeFg("#bbe1fa"), // 4: pale blue - moderate (transition)
+		ThemeFg("#f7dc6f"), // 5: gold - above average
+		ThemeFg("#e94560"), // 6: coral - many
+		ThemeFg("#ff2e63"), // 7: hot pink/red - hot
+	}
 }
 
 // GetHeatGradientColor returns an interpolated color for heatmap intensity (0-1) (bv-t4yg)
-func GetHeatGradientColor(intensity float64, t Theme) lipgloss.Color {
+func GetHeatGradientColor(intensity float64, t Theme) lipgloss.TerminalColor {
 	if intensity <= 0 {
 		return HeatmapGradientColors[0]
 	}
@@ -105,24 +108,25 @@ func GetHeatGradientColor(intensity float64, t Theme) lipgloss.Color {
 }
 
 // GetHeatGradientColorBg returns a background-friendly color for heatmap cell (bv-t4yg)
-// Returns both the background color and appropriate foreground for contrast
-func GetHeatGradientColorBg(intensity float64) (bg lipgloss.Color, fg lipgloss.Color) {
+// Returns both the background color and appropriate foreground for contrast.
+// On 16-color terminals, backgrounds are transparent and foreground uses ANSI-safe colors.
+func GetHeatGradientColorBg(intensity float64) (bg lipgloss.TerminalColor, fg lipgloss.TerminalColor) {
 	if intensity <= 0 {
-		return lipgloss.Color("#1a1a2e"), lipgloss.Color("#6272a4") // Dark bg, muted fg
+		return ThemeBg("#1a1a2e"), ThemeFg("#6272a4") // Dark bg, muted fg
 	}
 
 	// Select background color based on intensity
 	switch {
 	case intensity >= 0.8:
-		return lipgloss.Color("#ff2e63"), lipgloss.Color("#ffffff") // Hot pink, white text
+		return ThemeBg("#ff2e63"), ThemeFg("#ffffff") // Hot pink, white text
 	case intensity >= 0.6:
-		return lipgloss.Color("#e94560"), lipgloss.Color("#ffffff") // Coral, white text
+		return ThemeBg("#e94560"), ThemeFg("#ffffff") // Coral, white text
 	case intensity >= 0.4:
-		return lipgloss.Color("#f7dc6f"), lipgloss.Color("#1a1a2e") // Gold, dark text
+		return ThemeBg("#f7dc6f"), ThemeFg("#1a1a2e") // Gold, dark text
 	case intensity >= 0.2:
-		return lipgloss.Color("#3282b8"), lipgloss.Color("#ffffff") // Blue, white text
+		return ThemeBg("#3282b8"), ThemeFg("#ffffff") // Blue, white text
 	default:
-		return lipgloss.Color("#16213e"), lipgloss.Color("#bbe1fa") // Navy, light text
+		return ThemeBg("#16213e"), ThemeFg("#bbe1fa") // Navy, light text
 	}
 }
 

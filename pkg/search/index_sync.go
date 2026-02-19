@@ -42,7 +42,7 @@ func LoadOrNewVectorIndex(path string, dim int) (*VectorIndex, bool, error) {
 	if err == nil {
 		return idx, true, nil
 	}
-	
+
 	if os.IsNotExist(err) {
 		return NewVectorIndex(dim), false, nil
 	}

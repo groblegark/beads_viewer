@@ -197,10 +197,10 @@ func TestTree(t *testing.T) {
 		breadth   int
 		wantNodes int
 	}{
-		{"tree_1_2", 1, 2, 3},   // root + 2 children
-		{"tree_2_2", 2, 2, 7},   // 1 + 2 + 4
-		{"tree_3_2", 3, 2, 15},  // 1 + 2 + 4 + 8
-		{"tree_2_3", 2, 3, 13},  // 1 + 3 + 9
+		{"tree_1_2", 1, 2, 3},  // root + 2 children
+		{"tree_2_2", 2, 2, 7},  // 1 + 2 + 4
+		{"tree_3_2", 3, 2, 15}, // 1 + 2 + 4 + 8
+		{"tree_2_3", 2, 3, 13}, // 1 + 3 + 9
 	}
 
 	for _, tt := range tests {
@@ -373,12 +373,12 @@ func TestToIssues(t *testing.T) {
 
 func TestToIssuesWithConfig(t *testing.T) {
 	cfg := GeneratorConfig{
-		Seed:          123,
-		IDPrefix:      "CUSTOM",
-		IncludeLabels: true,
+		Seed:           123,
+		IDPrefix:       "CUSTOM",
+		IncludeLabels:  true,
 		IncludeMinutes: true,
-		StatusMix:     []model.Status{model.StatusOpen, model.StatusInProgress},
-		TypeMix:       []model.IssueType{model.TypeBug, model.TypeFeature},
+		StatusMix:      []model.Status{model.StatusOpen, model.StatusInProgress},
+		TypeMix:        []model.IssueType{model.TypeBug, model.TypeFeature},
 	}
 	gen := New(cfg)
 	gf := gen.Star(5)

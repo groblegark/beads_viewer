@@ -117,8 +117,8 @@ func TestCorrelationExplicitMentions(t *testing.T) {
 
 	var payload struct {
 		Stats struct {
-			TotalBeads       int            `json:"total_beads"`
-			BeadsWithCommits int            `json:"beads_with_commits"`
+			TotalBeads         int            `json:"total_beads"`
+			BeadsWithCommits   int            `json:"beads_with_commits"`
 			MethodDistribution map[string]int `json:"method_distribution"`
 		} `json:"stats"`
 		Histories map[string]struct {
@@ -267,10 +267,14 @@ func TestCorrelationRobotFileBeads(t *testing.T) {
 	}
 
 	var payload struct {
-		FilePath    string `json:"file_path"`
-		TotalBeads  int    `json:"total_beads"`
-		OpenBeads   []struct{ BeadID string `json:"bead_id"` } `json:"open_beads"`
-		ClosedBeads []struct{ BeadID string `json:"bead_id"` } `json:"closed_beads"`
+		FilePath   string `json:"file_path"`
+		TotalBeads int    `json:"total_beads"`
+		OpenBeads  []struct {
+			BeadID string `json:"bead_id"`
+		} `json:"open_beads"`
+		ClosedBeads []struct {
+			BeadID string `json:"bead_id"`
+		} `json:"closed_beads"`
 	}
 
 	if err := json.Unmarshal(out, &payload); err != nil {
@@ -306,10 +310,10 @@ func TestCorrelationRobotOrphans(t *testing.T) {
 
 	var payload struct {
 		Stats struct {
-			TotalCommits     int     `json:"total_commits"`
-			CorrelatedCount  int     `json:"correlated_count"`
-			OrphanCount      int     `json:"orphan_count"`
-			OrphanRatio      float64 `json:"orphan_ratio"`
+			TotalCommits    int     `json:"total_commits"`
+			CorrelatedCount int     `json:"correlated_count"`
+			OrphanCount     int     `json:"orphan_count"`
+			OrphanRatio     float64 `json:"orphan_ratio"`
 		} `json:"stats"`
 		Candidates []struct {
 			SHA           string `json:"sha"`

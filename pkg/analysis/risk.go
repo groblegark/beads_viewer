@@ -300,11 +300,14 @@ func joinRiskFactors(factors []string) string {
 	if len(factors) == 1 {
 		return factors[0]
 	}
+	if len(factors) == 2 {
+		return factors[0] + " and " + factors[1]
+	}
 	result := factors[0]
 	for i := 1; i < len(factors)-1; i++ {
 		result += ", " + factors[i]
 	}
-	result += ", " + factors[len(factors)-1]
+	result += ", and " + factors[len(factors)-1]
 	return result
 }
 

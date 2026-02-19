@@ -26,11 +26,11 @@ type FlowMatrixModel struct {
 	ready        bool
 
 	// Drill-down state
-	showDrilldown    bool
-	drilldownIssues  []model.Issue
-	drilldownCursor  int
-	drilldownScroll  int
-	drilldownTitle   string
+	showDrilldown   bool
+	drilldownIssues []model.Issue
+	drilldownCursor int
+	drilldownScroll int
+	drilldownTitle  string
 }
 
 // labelFlowStats holds computed stats for a single label

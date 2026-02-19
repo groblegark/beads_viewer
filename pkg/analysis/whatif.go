@@ -30,25 +30,25 @@ type PriorityReason struct {
 
 // ExplanationStatus provides inline status context
 type ExplanationStatus struct {
-	ComputedAt    string `json:"computed_at"`    // ISO timestamp
-	DataHash      string `json:"data_hash"`      // Hash of input data
-	Phase2Ready   bool   `json:"phase2_ready"`   // Whether advanced metrics are available
-	Deterministic bool   `json:"deterministic"`  // Whether output is deterministic
-	Capped        bool   `json:"capped"`         // Whether any caps were applied
+	ComputedAt    string `json:"computed_at"`   // ISO timestamp
+	DataHash      string `json:"data_hash"`     // Hash of input data
+	Phase2Ready   bool   `json:"phase2_ready"`  // Whether advanced metrics are available
+	Deterministic bool   `json:"deterministic"` // Whether output is deterministic
+	Capped        bool   `json:"capped"`        // Whether any caps were applied
 	CappedFields  string `json:"capped_fields,omitempty"`
 }
 
 // DefaultFieldDescriptions returns standard field descriptions for agents
 func DefaultFieldDescriptions() map[string]string {
 	return map[string]string{
-		"top_reasons":              "Top 3 factors contributing to priority score, ordered by weight",
-		"what_if.unblocks":         "Number of issues directly waiting on this one",
-		"what_if.cascade":          "Total issues transitively unblocked (including indirect)",
-		"what_if.depth":            "Critical path depth reduction if completed",
-		"what_if.days_saved":       "Estimated days saved based on issue estimates",
+		"top_reasons":                  "Top 3 factors contributing to priority score, ordered by weight",
+		"what_if.unblocks":             "Number of issues directly waiting on this one",
+		"what_if.cascade":              "Total issues transitively unblocked (including indirect)",
+		"what_if.depth":                "Critical path depth reduction if completed",
+		"what_if.days_saved":           "Estimated days saved based on issue estimates",
 		"what_if.parallelization_gain": "Net change in parallel work capacity (direct_unblocks - 1); positive = more parallel work possible",
-		"status.phase2":            "Whether expensive graph metrics (PageRank, betweenness) are included",
-		"status.capped":            "Whether results were truncated to prevent overload",
+		"status.phase2":                "Whether expensive graph metrics (PageRank, betweenness) are included",
+		"status.capped":                "Whether results were truncated to prevent overload",
 	}
 }
 

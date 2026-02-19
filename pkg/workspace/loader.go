@@ -191,7 +191,7 @@ func (l *AggregateLoader) namespaceIssues(issues []model.Issue, prefix string, l
 				continue
 			}
 			dep.IssueID = QualifyID(dep.IssueID, prefix)
-			
+
 			// Resolve DependsOnID
 			if localIDs[dep.DependsOnID] {
 				dep.DependsOnID = QualifyID(dep.DependsOnID, prefix)

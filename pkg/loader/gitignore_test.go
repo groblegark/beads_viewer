@@ -18,12 +18,12 @@ func TestMatchesBVPattern(t *testing.T) {
 		{".bv/*", true},
 		{".bv/**", true},
 		{".bv/**/*", true},
-		{"/.bv", true},    // Leading slash should be normalized
+		{"/.bv", true}, // Leading slash should be normalized
 		{"/.bv/", true},
 
 		// Should not match
 		{"", false},
-		{"#.bv", false},   // Comment
+		{"#.bv", false}, // Comment
 		{".bv2", false},
 		{".bvx", false},
 		{"bv/", false},

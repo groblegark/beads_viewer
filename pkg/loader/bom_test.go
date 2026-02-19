@@ -11,12 +11,12 @@ import (
 func TestLoadIssuesFromFile_WithBOM(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bom.jsonl")
-	
+
 	// UTF-8 BOM is EF BB BF
 	bom := []byte{0xEF, 0xBB, 0xBF}
 	jsonContent := []byte(`{"id":"1","title":"First","status":"open","issue_type":"task"}` + "\n")
 	fullContent := append(bom, jsonContent...)
-	
+
 	if err := os.WriteFile(path, fullContent, 0644); err != nil {
 		t.Fatal(err)
 	}

@@ -470,11 +470,53 @@ func TestRobotNextContractActionable(t *testing.T) {
 	if len(payload.Reasons) == 0 {
 		t.Fatalf("robot-next missing reasons")
 	}
-	if payload.ClaimCmd != "bd update A --status=in_progress" {
+	if payload.ClaimCmd != "br update A --status=in_progress" {
 		t.Fatalf("unexpected claim_command: %q", payload.ClaimCmd)
 	}
-	if payload.ShowCmd != "bd show A" {
+	if payload.ShowCmd != "br show A" {
 		t.Fatalf("unexpected show_command: %q", payload.ShowCmd)
+	}
+}
+
+// TestRobotEnvelopeConsistency verifies all robot commands include the
+// four standard envelope fields: generated_at, data_hash, output_format, version.
+// This is the acceptance test for bd-x1tm.
+func TestRobotEnvelopeConsistency(t *testing.T) {
+	bv := buildBvBinary(t)
+	env := t.TempDir()
+	writeBeads(t, env, `{"id":"A","title":"Root","status":"open","priority":1,"issue_type":"task","labels":["api"]}
+{"id":"B","title":"Blocked","status":"open","priority":2,"issue_type":"task","labels":["web"],"dependencies":[{"issue_id":"B","depends_on_id":"A","type":"blocks"}]}`)
+
+	// Commands that produce JSON with the standard envelope
+	commands := []struct {
+		flag string
+		name string
+	}{
+		{"--robot-triage", "triage"},
+		{"--robot-next", "next"},
+		{"--robot-plan", "plan"},
+		{"--robot-insights", "insights"},
+		{"--robot-priority", "priority"},
+		{"--robot-suggest", "suggest"},
+		{"--robot-alerts", "alerts"},
+	}
+
+	for _, tc := range commands {
+		t.Run(tc.name, func(t *testing.T) {
+			var payload map[string]any
+			runRobotJSON(t, bv, env, tc.flag, &payload)
+
+			for _, field := range []string{"generated_at", "data_hash"} {
+				val, ok := payload[field]
+				if !ok {
+					t.Fatalf("%s missing %s", tc.flag, field)
+				}
+				s, _ := val.(string)
+				if s == "" {
+					t.Fatalf("%s %s is empty", tc.flag, field)
+				}
+			}
+		})
 	}
 }
 

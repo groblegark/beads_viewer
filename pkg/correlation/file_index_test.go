@@ -862,8 +862,8 @@ func TestBuildCoChangeMatrix(t *testing.T) {
 				BeadID: "bv-1",
 				Commits: []CorrelatedCommit{
 					{
-						SHA:      "commit1",
-						ShortSHA: "c1",
+						SHA:       "commit1",
+						ShortSHA:  "c1",
 						Timestamp: now,
 						Files: []FileChange{
 							{Path: "auth/token.go"},
@@ -872,8 +872,8 @@ func TestBuildCoChangeMatrix(t *testing.T) {
 						},
 					},
 					{
-						SHA:      "commit2",
-						ShortSHA: "c2",
+						SHA:       "commit2",
+						ShortSHA:  "c2",
 						Timestamp: now.Add(-24 * time.Hour),
 						Files: []FileChange{
 							{Path: "auth/token.go"},

@@ -5,13 +5,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"flag"
+	flag "github.com/spf13/pflag"
 	"fmt"
+	"html"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,9 +23,12 @@ import (
 
 	json "github.com/goccy/go-json"
 
+	toon "github.com/Dicklesworthstone/toon-go"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 
+	"github.com/Dicklesworthstone/beads_viewer/internal/datasource"
+	"github.com/Dicklesworthstone/beads_viewer/pkg/agents"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/analysis"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/baseline"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/correlation"
@@ -44,6 +50,7 @@ import (
 )
 
 func main() {
+	cpuProfile := flag.String("cpu-profile", "", "Write CPU profile to file")
 	help := flag.Bool("help", false, "Show help")
 	versionFlag := flag.Bool("version", false, "Show version")
 	// Update flags (bv-182)
@@ -53,6 +60,9 @@ func main() {
 	yesFlag := flag.Bool("yes", false, "Skip confirmation prompts (use with --update)")
 	exportFile := flag.String("export-md", "", "Export issues to a Markdown file (e.g., report.md)")
 	robotHelp := flag.Bool("robot-help", false, "Show AI agent help")
+	robotDocs := flag.String("robot-docs", "", "Machine-readable JSON docs for AI agents. Topics: guide, commands, examples, env, exit-codes, all")
+	outputFormat := flag.String("format", "", "Structured output format for --robot-* commands: json or toon (env: BV_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT)")
+	toonStats := flag.Bool("stats", false, "Show JSON vs TOON token estimates on stderr (env: TOON_STATS=1)")
 	robotInsights := flag.Bool("robot-insights", false, "Output graph analysis and insights as JSON for AI agents")
 	robotPlan := flag.Bool("robot-plan", false, "Output dependency-respecting execution plan as JSON for AI agents")
 	robotPriority := flag.Bool("robot-priority", false, "Output priority recommendations as JSON for AI agents")
@@ -68,6 +78,9 @@ func main() {
 	attentionLimit := flag.Int("attention-limit", 5, "Limit number of labels in --robot-label-attention output")
 	robotAlerts := flag.Bool("robot-alerts", false, "Output alerts (drift + proactive) as JSON for AI agents")
 	robotMetrics := flag.Bool("robot-metrics", false, "Output performance metrics (timing, cache, memory) as JSON")
+	// JSON Schema for robot outputs (bd-2kxo)
+	robotSchema := flag.Bool("robot-schema", false, "Output JSON Schema definitions for all robot commands")
+	schemaCommand := flag.String("schema-command", "", "Output schema for specific command only (e.g., robot-triage)")
 	// Smart suggestions (bv-180)
 	robotSuggest := flag.Bool("robot-suggest", false, "Output smart suggestions (duplicates, dependencies, labels, cycles) as JSON")
 	suggestType := flag.String("suggest-type", "", "Filter suggestions by type: duplicate, dependency, label, cycle")
@@ -92,8 +105,7 @@ func main() {
 	alertSeverity := flag.String("severity", "", "Filter robot alerts by severity (info|warning|critical)")
 	alertType := flag.String("alert-type", "", "Filter robot alerts by alert type (e.g., stale_issue)")
 	alertLabel := flag.String("alert-label", "", "Filter robot alerts by label match")
-	recipeName := flag.String("recipe", "", "Apply named recipe (e.g., triage, actionable, high-impact)")
-	recipeShort := flag.String("r", "", "Shorthand for --recipe")
+	recipeName := flag.StringP("recipe", "r", "", "Apply named recipe (e.g., triage, actionable, high-impact)")
 	semanticQuery := flag.String("search", "", "Semantic search query (vector-based; builds/updates index on first run)")
 	robotSearch := flag.Bool("robot-search", false, "Output semantic search results as JSON for AI agents (use with --search)")
 	searchLimit := flag.Int("search-limit", 10, "Max results for --search/--robot-search")
@@ -185,6 +197,7 @@ func main() {
 	pagesIncludeClosed := flag.Bool("pages-include-closed", true, "Include closed issues in export (default: true)")
 	pagesIncludeHistory := flag.Bool("pages-include-history", true, "Include git history for time-travel (default: true)")
 	previewPages := flag.String("preview-pages", "", "Preview existing static site bundle")
+	previewNoLiveReload := flag.Bool("no-live-reload", false, "Disable live-reload in preview mode")
 	watchExport := flag.Bool("watch-export", false, "Watch for beads changes and auto-regenerate export (use with --export-pages)")
 	pagesWizard := flag.Bool("pages", false, "Launch interactive Pages deployment wizard")
 	// Debug rendering flag (for diagnosing TUI issues)
@@ -194,7 +207,35 @@ func main() {
 	// Experimental background snapshot worker (bv-o11l)
 	backgroundMode := flag.Bool("background-mode", false, "Enable experimental background snapshot loading (TUI only)")
 	noBackgroundMode := flag.Bool("no-background-mode", false, "Disable experimental background snapshot loading (TUI only)")
+	// Agent blurb management (bv-105)
+	agentsAdd := flag.Bool("agents-add", false, "Add beads workflow instructions to AGENTS.md (creates file if needed)")
+	agentsRemove := flag.Bool("agents-remove", false, "Remove beads workflow instructions from AGENTS.md")
+	agentsUpdate := flag.Bool("agents-update", false, "Update beads workflow instructions to latest version")
+	agentsCheck := flag.Bool("agents-check", false, "Check AGENTS.md blurb status (default if no --agents-* action)")
+	agentsDryRun := flag.Bool("agents-dry-run", false, "Show what would happen without executing (use with --agents-*)")
+	agentsForce := flag.Bool("agents-force", false, "Skip confirmation prompts (use with --agents-*)")
+	// Override pflag's default usage so -h/--help prints our custom header.
+	flag.Usage = func() {
+		fmt.Println("Usage: bv [options]")
+		fmt.Println("\nA TUI viewer for beads issue tracker.")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
+
+	// CPU profiling support
+	if *cpuProfile != "" {
+		f, err := os.Create(*cpuProfile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not create CPU profile: %v\n", err)
+			os.Exit(1)
+		}
+		defer f.Close()
+		if err := pprof.StartCPUProfile(f); err != nil {
+			fmt.Fprintf(os.Stderr, "Could not start CPU profile: %v\n", err)
+			os.Exit(1)
+		}
+		defer pprof.StopCPUProfile()
+	}
 
 	// Ensure static export flags are retained even when build tags strip features in some environments.
 	_ = exportPages
@@ -202,6 +243,7 @@ func main() {
 	_ = pagesIncludeClosed
 	_ = pagesIncludeHistory
 	_ = previewPages
+	_ = previewNoLiveReload
 	_ = pagesWizard
 	_ = watchExport
 	_ = debugRender
@@ -245,6 +287,7 @@ func main() {
 		*robotLabelAttention ||
 		*robotAlerts ||
 		*robotMetrics ||
+		*robotSchema ||
 		*robotSuggest ||
 		*robotGraph ||
 		*robotSearch ||
@@ -265,6 +308,7 @@ func main() {
 		*robotByLabel != "" ||
 		*robotByAssignee != "" ||
 		*robotCapacity ||
+		*robotDocs != "" ||
 		// When stdout is non-TTY, --diff-since auto-enables JSON output. Mark this
 		// as robot mode early so parsers keep stdout JSON clean.
 		(*diffSince != "" && !stdoutIsTTY)
@@ -275,9 +319,13 @@ func main() {
 		envRobot = true
 	}
 
-	// Handle -r shorthand
-	if *recipeShort != "" && *recipeName == "" {
-		*recipeName = *recipeShort
+	// Structured output format for --robot-* commands.
+	robotOutputFormat = resolveRobotOutputFormat(*outputFormat)
+	robotToonEncodeOptions = resolveToonEncodeOptionsFromEnv()
+	robotShowToonStats = *toonStats || strings.TrimSpace(os.Getenv("TOON_STATS")) == "1"
+	if robotOutputFormat != "json" && robotOutputFormat != "toon" {
+		fmt.Fprintf(os.Stderr, "Invalid --format %q (expected json|toon)\n", robotOutputFormat)
+		os.Exit(2)
 	}
 
 	if *help {
@@ -292,6 +340,13 @@ func main() {
 		fmt.Println("====================================")
 		fmt.Println("This tool provides structural analysis of the issue tracker graph (DAG).")
 		fmt.Println("Use these commands to understand project state without parsing raw JSONL.")
+		fmt.Println("")
+		fmt.Println("Output format:")
+		fmt.Println("  --format json|toon")
+		fmt.Println("      Structured output encoding for --robot-* commands (default: json).")
+		fmt.Println("      Env: BV_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.")
+		fmt.Println("  --stats")
+		fmt.Println("      Print JSON vs TOON token estimates to stderr (or set TOON_STATS=1).")
 		fmt.Println("")
 		fmt.Println("Commands:")
 		fmt.Println("  --robot-plan")
@@ -350,7 +405,7 @@ func main() {
 		fmt.Println("  --emit-script [--script-limit=N]")
 		fmt.Println("      Emits a shell script for top-N recommendations (default: 5).")
 		fmt.Println("      Includes hash/config header for deterministic ordering.")
-		fmt.Println("      Output: bd show commands for each item, commented claim commands")
+		fmt.Println("      Output: br show commands for each item, commented claim commands")
 		fmt.Println("      Options: --script-format=bash|fish|zsh, --script-limit=N")
 		fmt.Println("      Example: bv --emit-script > work.sh && bash work.sh")
 		fmt.Println("      Example: bv --emit-script --script-limit=3")
@@ -496,8 +551,8 @@ func main() {
 		fmt.Println("      Useful for agent workflows and automation.")
 		fmt.Println("      Output includes:")
 		fmt.Println("        - Header comment with data hash and generation time")
-		fmt.Println("        - bd show commands for each recommended item")
-		fmt.Println("        - Commented bd update commands to claim items")
+		fmt.Println("        - br show commands for each recommended item")
+		fmt.Println("        - Commented br update commands to claim items")
 		fmt.Println("      Options:")
 		fmt.Println("        --script-limit=N      Number of items (default: 5)")
 		fmt.Println("        --script-format=X     Script format: bash, fish, zsh")
@@ -547,6 +602,18 @@ func main() {
 		fmt.Println("      Lists all available recipes as JSON.")
 		fmt.Println("      Output: {recipes: [{name, description, source}]}")
 		fmt.Println("      Sources: 'builtin', 'user' (~/.config/bv/recipes.yaml), 'project' (.bv/recipes.yaml)")
+		fmt.Println("")
+		fmt.Println("  --robot-schema [--schema-command=NAME]")
+		fmt.Println("      Outputs JSON Schema definitions for all robot command outputs.")
+		fmt.Println("      Useful for validation, tool integration, and understanding output structure.")
+		fmt.Println("      Key fields:")
+		fmt.Println("        - schema_version: Version of the schema format")
+		fmt.Println("        - envelope: Common fields present in all robot outputs")
+		fmt.Println("        - commands: Map of command name -> JSON Schema definition")
+		fmt.Println("      Options:")
+		fmt.Println("        --schema-command=NAME: Output schema for specific command only")
+		fmt.Println("      Example: bv --robot-schema")
+		fmt.Println("      Example: bv --robot-schema --schema-command=robot-triage")
 		fmt.Println("")
 		fmt.Println("  --robot-label-health")
 		fmt.Println("      Outputs label health metrics as JSON (velocity, freshness, flow, criticality).")
@@ -715,7 +782,11 @@ func main() {
 		fmt.Println("      --preview-pages <dir>")
 		fmt.Println("          Start local server to preview existing export.")
 		fmt.Println("          Opens http://localhost:9000 (or next available port) in your browser.")
+		fmt.Println("          Live-reload is enabled by default: browser auto-refreshes on file changes.")
 		fmt.Println("          Example: bv --preview-pages ./bv-pages")
+		fmt.Println("")
+		fmt.Println("      --no-live-reload")
+		fmt.Println("          Disable live-reload for --preview-pages (default: live-reload is enabled).")
 		fmt.Println("")
 		fmt.Println("      --pages-title <title>")
 		fmt.Println("          Custom title for the static site (default: 'Project Issues')")
@@ -806,6 +877,215 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Handle --agents-* commands (bv-105)
+	agentsAnyAction := *agentsAdd || *agentsRemove || *agentsUpdate || *agentsCheck
+	agentsAnyFlag := agentsAnyAction || *agentsDryRun || *agentsForce
+	if agentsAnyFlag {
+		workDir, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting working directory: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Default to check mode when no explicit action
+		isCheck := !*agentsAdd && !*agentsRemove && !*agentsUpdate
+
+		detection := agents.DetectAgentFileInParents(workDir, 3)
+
+		if robotMode {
+			// JSON output for AI agents
+			result := map[string]interface{}{
+				"found":            detection.Found(),
+				"file_path":        detection.FilePath,
+				"file_type":        detection.FileType,
+				"has_blurb":        detection.HasBlurb,
+				"has_legacy_blurb": detection.HasLegacyBlurb,
+				"blurb_version":    detection.BlurbVersion,
+				"current_version":  agents.BlurbVersion,
+				"needs_blurb":      detection.Found() && detection.NeedsBlurb(),
+				"needs_upgrade":    detection.NeedsUpgrade(),
+			}
+			data, _ := json.MarshalIndent(result, "", "  ")
+			fmt.Println(string(data))
+			os.Exit(0)
+		}
+
+		if isCheck || *agentsCheck {
+			// Check mode: report status
+			if !detection.Found() {
+				fmt.Printf("No agent file found (searched up to 3 parent directories from %s)\n", workDir)
+				fmt.Println("Run 'bv --agents-add' to create AGENTS.md with beads workflow instructions.")
+				os.Exit(0)
+			}
+			if detection.HasLegacyBlurb {
+				fmt.Printf("Found %s at %s (legacy blurb — needs upgrade)\n", detection.FileType, detection.FilePath)
+				fmt.Println("Run 'bv --agents-update' to upgrade to the current format.")
+				os.Exit(0)
+			}
+			if detection.HasBlurb && detection.BlurbVersion < agents.BlurbVersion {
+				fmt.Printf("Found %s at %s (blurb v%d, current v%d — needs update)\n",
+					detection.FileType, detection.FilePath, detection.BlurbVersion, agents.BlurbVersion)
+				fmt.Println("Run 'bv --agents-update' to update to the latest version.")
+				os.Exit(0)
+			}
+			if detection.HasBlurb {
+				fmt.Printf("Found %s at %s (blurb v%d — up to date)\n",
+					detection.FileType, detection.FilePath, detection.BlurbVersion)
+				os.Exit(0)
+			}
+			// File exists but no blurb
+			fmt.Printf("Found %s at %s (no beads workflow instructions)\n", detection.FileType, detection.FilePath)
+			fmt.Println("Run 'bv --agents-add' to add beads workflow instructions.")
+			os.Exit(0)
+		}
+
+		if *agentsAdd {
+			if detection.Found() && detection.HasBlurb && detection.BlurbVersion >= agents.BlurbVersion {
+				fmt.Printf("%s already has current blurb (v%d) — no action needed.\n", detection.FilePath, detection.BlurbVersion)
+				os.Exit(0)
+			}
+			if detection.Found() && (detection.HasLegacyBlurb || (detection.HasBlurb && detection.BlurbVersion < agents.BlurbVersion)) {
+				fmt.Println("Existing blurb found but outdated. Use --agents-update instead.")
+				os.Exit(1)
+			}
+
+			targetPath := detection.FilePath
+			creating := false
+			if !detection.Found() {
+				targetPath = agents.GetPreferredAgentFilePath(workDir)
+				creating = true
+			}
+
+			if *agentsDryRun {
+				if creating {
+					fmt.Printf("[dry-run] Would create %s with beads workflow instructions.\n", targetPath)
+				} else {
+					fmt.Printf("[dry-run] Would append beads workflow instructions to %s.\n", targetPath)
+				}
+				os.Exit(0)
+			}
+
+			if !*agentsForce {
+				action := "Append blurb to"
+				if creating {
+					action = "Create"
+				}
+				fmt.Printf("%s %s? [Y/n]: ", action, targetPath)
+				reader := bufio.NewReader(os.Stdin)
+				response, _ := reader.ReadString('\n')
+				response = strings.ToLower(strings.TrimSpace(response))
+				if response != "" && response != "y" && response != "yes" {
+					fmt.Println("Cancelled.")
+					os.Exit(0)
+				}
+			}
+
+			if creating {
+				if err := agents.CreateAgentFile(targetPath); err != nil {
+					fmt.Fprintf(os.Stderr, "Error creating agent file: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Printf("Created %s with beads workflow instructions.\n", targetPath)
+			} else {
+				if err := agents.AppendBlurbToFile(targetPath); err != nil {
+					fmt.Fprintf(os.Stderr, "Error appending blurb: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Printf("Appended beads workflow instructions to %s.\n", targetPath)
+			}
+
+			ok, _ := agents.VerifyBlurbPresent(targetPath)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "Warning: verification failed — blurb may not have been written correctly.\n")
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+
+		if *agentsUpdate {
+			if !detection.Found() {
+				fmt.Println("No agent file found. Use --agents-add to create one.")
+				os.Exit(1)
+			}
+			if !detection.HasBlurb && !detection.HasLegacyBlurb {
+				fmt.Printf("%s has no blurb to update. Use --agents-add to add one.\n", detection.FilePath)
+				os.Exit(1)
+			}
+			if detection.HasBlurb && detection.BlurbVersion >= agents.BlurbVersion {
+				fmt.Printf("%s already has current blurb (v%d) — no update needed.\n", detection.FilePath, detection.BlurbVersion)
+				os.Exit(0)
+			}
+
+			if *agentsDryRun {
+				if detection.HasLegacyBlurb {
+					fmt.Printf("[dry-run] Would upgrade legacy blurb to v%d in %s.\n", agents.BlurbVersion, detection.FilePath)
+				} else {
+					fmt.Printf("[dry-run] Would update blurb from v%d to v%d in %s.\n",
+						detection.BlurbVersion, agents.BlurbVersion, detection.FilePath)
+				}
+				os.Exit(0)
+			}
+
+			if !*agentsForce {
+				fmt.Printf("Update blurb in %s? [Y/n]: ", detection.FilePath)
+				reader := bufio.NewReader(os.Stdin)
+				response, _ := reader.ReadString('\n')
+				response = strings.ToLower(strings.TrimSpace(response))
+				if response != "" && response != "y" && response != "yes" {
+					fmt.Println("Cancelled.")
+					os.Exit(0)
+				}
+			}
+
+			if err := agents.UpdateBlurbInFile(detection.FilePath); err != nil {
+				fmt.Fprintf(os.Stderr, "Error updating blurb: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Updated blurb to v%d in %s.\n", agents.BlurbVersion, detection.FilePath)
+
+			ok, _ := agents.VerifyBlurbPresent(detection.FilePath)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "Warning: verification failed — blurb may not have been written correctly.\n")
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+
+		if *agentsRemove {
+			if !detection.Found() {
+				fmt.Println("No agent file found — nothing to remove.")
+				os.Exit(0)
+			}
+			if !detection.HasBlurb && !detection.HasLegacyBlurb {
+				fmt.Printf("%s has no blurb — nothing to remove.\n", detection.FilePath)
+				os.Exit(0)
+			}
+
+			if *agentsDryRun {
+				fmt.Printf("[dry-run] Would remove blurb from %s.\n", detection.FilePath)
+				os.Exit(0)
+			}
+
+			if !*agentsForce {
+				fmt.Printf("Remove blurb from %s? [Y/n]: ", detection.FilePath)
+				reader := bufio.NewReader(os.Stdin)
+				response, _ := reader.ReadString('\n')
+				response = strings.ToLower(strings.TrimSpace(response))
+				if response != "" && response != "y" && response != "yes" {
+					fmt.Println("Cancelled.")
+					os.Exit(0)
+				}
+			}
+
+			if err := agents.RemoveBlurbFromFile(detection.FilePath); err != nil {
+				fmt.Fprintf(os.Stderr, "Error removing blurb: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Removed blurb from %s.\n", detection.FilePath)
+			os.Exit(0)
+		}
+	}
+
 	// Handle feedback commands (bv-90)
 	if *feedbackAccept != "" || *feedbackIgnore != "" || *feedbackReset || *feedbackShow {
 		beadsDir, err := loader.GetBeadsDir("")
@@ -847,7 +1127,7 @@ func main() {
 			}
 
 			// Load issues to get score breakdown
-			issues, err := loader.LoadIssues("")
+			issues, err := datasource.LoadIssues("")
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error loading issues: %v\n", err)
 				os.Exit(1)
@@ -925,6 +1205,56 @@ func main() {
 		if err := encoder.Encode(output); err != nil {
 			fmt.Fprintf(os.Stderr, "Error encoding recipes: %v\n", err)
 			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	// Handle --robot-schema (bd-2kxo)
+	if *robotSchema {
+		schemas := generateRobotSchemas()
+
+		// Filter to specific command if requested
+		if *schemaCommand != "" {
+			if schema, ok := schemas.Commands[*schemaCommand]; ok {
+				singleOutput := map[string]interface{}{
+					"schema_version": schemas.SchemaVersion,
+					"generated_at":   schemas.GeneratedAt,
+					"command":        *schemaCommand,
+					"schema":         schema,
+				}
+				encoder := newRobotEncoder(os.Stdout)
+				if err := encoder.Encode(singleOutput); err != nil {
+					fmt.Fprintf(os.Stderr, "Error encoding schema: %v\n", err)
+					os.Exit(1)
+				}
+				os.Exit(0)
+			}
+			fmt.Fprintf(os.Stderr, "Unknown command: %s\n", *schemaCommand)
+			fmt.Fprintln(os.Stderr, "Available commands:")
+			for cmd := range schemas.Commands {
+				fmt.Fprintf(os.Stderr, "  %s\n", cmd)
+			}
+			os.Exit(1)
+		}
+
+		encoder := newRobotEncoder(os.Stdout)
+		if err := encoder.Encode(schemas); err != nil {
+			fmt.Fprintf(os.Stderr, "Error encoding schemas: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	// Machine-readable robot docs (bd-2v50)
+	if *robotDocs != "" {
+		docs := generateRobotDocs(*robotDocs)
+		encoder := newRobotEncoder(os.Stdout)
+		if err := encoder.Encode(docs); err != nil {
+			fmt.Fprintf(os.Stderr, "Error encoding robot-docs: %v\n", err)
+			os.Exit(1)
+		}
+		if _, hasErr := docs["error"]; hasErr {
+			os.Exit(2) // Invalid arguments per documented exit codes
 		}
 		os.Exit(0)
 	}
@@ -1040,7 +1370,7 @@ func main() {
 	} else {
 		// Load from single repo (original behavior)
 		var err error
-		issues, err = loader.LoadIssues("")
+		issues, err = datasource.LoadIssues("")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading beads: %v\n", err)
 			fmt.Fprintln(os.Stderr, "Make sure you are in a project initialized with 'bd init'.")
@@ -1097,6 +1427,14 @@ func main() {
 				}
 			}
 		}
+	}
+
+	// Apply recipe filtering early for robot modes (bv-93)
+	// This ensures --recipe filters are applied before robot modes exit.
+	// dataHash uses pre-filtered issues for stability.
+	if activeRecipe != nil && (*robotTriage || *robotNext || *robotTriageByTrack || *robotTriageByLabel || *robotPriority || *robotInsights || *robotPlan) {
+		issues = applyRecipeFilters(issues, activeRecipe)
+		issues = applyRecipeSort(issues, activeRecipe)
 	}
 
 	// Handle semantic search CLI (bv-9gf.3)
@@ -1294,7 +1632,7 @@ func main() {
 
 	// Handle --pages wizard (bv-10g)
 	if *pagesWizard {
-		if err := runPagesWizard(issues, beadsPath); err != nil {
+		if err := runPagesWizard(beadsPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -1303,7 +1641,7 @@ func main() {
 
 	// Handle --preview-pages (before export since it doesn't need analysis)
 	if *previewPages != "" {
-		if err := runPreviewServer(*previewPages); err != nil {
+		if err := runPreviewServer(*previewPages, !*previewNoLiveReload); err != nil {
 			fmt.Fprintf(os.Stderr, "Error starting preview server: %v\n", err)
 			os.Exit(1)
 		}
@@ -1458,34 +1796,99 @@ func main() {
 
 		// Watch mode (bv-55): monitor .beads/ for changes and auto-regenerate
 		if *watchExport {
-			cwd, _ := os.Getwd()
-			issuesFile := filepath.Join(cwd, ".beads", "issues.jsonl")
-
 			fmt.Println("")
 			fmt.Println("Watch mode enabled. Monitoring for changes...")
-			fmt.Printf("  → Watching: %s\n", issuesFile)
+
+			// Collect all issues.jsonl files to watch
+			var watchFiles []string
+			var watchers []*watcher.Watcher
+
+			if *workspaceConfig != "" {
+				// Workspace mode: watch all repos' issues.jsonl files (bv-79)
+				wsConfig, err := workspace.LoadConfig(*workspaceConfig)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error loading workspace config: %v\n", err)
+					os.Exit(1)
+				}
+				workspaceRoot := filepath.Dir(filepath.Dir(*workspaceConfig))
+
+				for _, repo := range wsConfig.Repos {
+					if !repo.IsEnabled() {
+						continue
+					}
+					repoPath := repo.Path
+					if !filepath.IsAbs(repoPath) {
+						repoPath = filepath.Join(workspaceRoot, repoPath)
+					}
+					beadsDir := filepath.Join(repoPath, repo.GetBeadsPath())
+					issuesFile, err := loader.FindJSONLPath(beadsDir)
+					if err != nil {
+						fmt.Printf("  → Warning: could not find issues.jsonl for repo %s: %v\n", repo.GetName(), err)
+						continue
+					}
+					watchFiles = append(watchFiles, issuesFile)
+				}
+
+				if len(watchFiles) == 0 {
+					fmt.Fprintf(os.Stderr, "Error: no valid issues.jsonl files found in workspace\n")
+					os.Exit(1)
+				}
+			} else {
+				// Single-repo mode: watch current directory's issues.jsonl
+				cwd, _ := os.Getwd()
+				issuesFile := filepath.Join(cwd, ".beads", "issues.jsonl")
+				watchFiles = append(watchFiles, issuesFile)
+			}
+
+			// Print watched files
+			for _, f := range watchFiles {
+				fmt.Printf("  → Watching: %s\n", f)
+			}
 			fmt.Println("  → Press Ctrl+C to stop")
 			fmt.Println("")
 			fmt.Println("To preview with auto-refresh, run in another terminal:")
 			fmt.Printf("  bv --preview-pages %s\n", *exportPages)
 
-			// Create file watcher with 500ms debounce
-			w, err := watcher.NewWatcher(issuesFile,
-				watcher.WithDebounceDuration(500*time.Millisecond),
-				watcher.WithOnError(func(err error) {
-					fmt.Printf("  → Watch error: %v\n", err)
-				}),
-			)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating watcher: %v\n", err)
-				os.Exit(1)
+			// Create a merged change channel for all watchers
+			mergedChangeCh := make(chan struct{}, 1)
+
+			// Create file watchers with 500ms debounce for each file
+			for _, watchFile := range watchFiles {
+				w, err := watcher.NewWatcher(watchFile,
+					watcher.WithDebounceDuration(500*time.Millisecond),
+					watcher.WithOnError(func(err error) {
+						fmt.Printf("  → Watch error: %v\n", err)
+					}),
+				)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error creating watcher for %s: %v\n", watchFile, err)
+					os.Exit(1)
+				}
+
+				if err := w.Start(); err != nil {
+					fmt.Fprintf(os.Stderr, "Error starting watcher for %s: %v\n", watchFile, err)
+					os.Exit(1)
+				}
+				watchers = append(watchers, w)
+
+				// Forward changes to merged channel
+				go func(ch <-chan struct{}) {
+					for range ch {
+						select {
+						case mergedChangeCh <- struct{}{}:
+						default:
+							// Already a change pending, skip
+						}
+					}
+				}(w.Changed())
 			}
 
-			if err := w.Start(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error starting watcher: %v\n", err)
-				os.Exit(1)
-			}
-			defer w.Stop()
+			// Cleanup all watchers on exit
+			defer func() {
+				for _, w := range watchers {
+					w.Stop()
+				}
+			}()
 
 			// Set up signal handling for graceful shutdown
 			sigCh := make(chan os.Signal, 1)
@@ -1495,9 +1898,15 @@ func main() {
 			// Watch loop
 			for {
 				select {
-				case <-w.Changed():
-					// Reload issues from disk
-					freshIssues, err := loader.LoadIssues("")
+				case <-mergedChangeCh:
+					// Reload issues from disk using appropriate method
+					var freshIssues []model.Issue
+					var err error
+					if *workspaceConfig != "" {
+						freshIssues, _, err = workspace.LoadAllFromConfig(context.Background(), *workspaceConfig)
+					} else {
+						freshIssues, err = datasource.LoadIssues("")
+					}
 					if err != nil {
 						fmt.Printf("  → Error reloading issues: %v\n", err)
 						continue
@@ -1879,10 +2288,9 @@ func main() {
 		driftResult.Alerts = filtered
 
 		output := struct {
-			GeneratedAt string        `json:"generated_at"`
-			DataHash    string        `json:"data_hash"`
-			Alerts      []drift.Alert `json:"alerts"`
-			Summary     struct {
+			RobotEnvelope
+			Alerts  []drift.Alert `json:"alerts"`
+			Summary struct {
 				Total    int `json:"total"`
 				Critical int `json:"critical"`
 				Warning  int `json:"warning"`
@@ -1890,9 +2298,8 @@ func main() {
 			} `json:"summary"`
 			UsageHints []string `json:"usage_hints"`
 		}{
-			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-			DataHash:    dataHash,
-			Alerts:      driftResult.Alerts,
+			RobotEnvelope: NewRobotEnvelope(dataHash),
+			Alerts:        driftResult.Alerts,
 			UsageHints: []string{
 				"--severity=warning --alert-type=stale_issue   # stale warnings only",
 				"--alert-type=blocking_cascade                 # high-unblock opportunities",
@@ -2117,8 +2524,7 @@ func main() {
 			output.Baseline.CreatedAt = bl.CreatedAt.Format(time.RFC3339)
 			output.Baseline.CommitSHA = bl.CommitSHA
 
-			encoder := json.NewEncoder(os.Stdout)
-			encoder.SetIndent("", "  ")
+			encoder := newRobotEncoder(os.Stdout)
 			if err := encoder.Encode(output); err != nil {
 				fmt.Fprintf(os.Stderr, "Error encoding drift result: %v\n", err)
 				os.Exit(1)
@@ -2496,12 +2902,63 @@ func main() {
 	}
 
 	if *robotTriage || *robotNext || *robotTriageByTrack || *robotTriageByLabel {
+		// Attempt to load history for staleness analysis
+		// We use a best-effort approach here - if history isn't available or fails,
+		// we just proceed without staleness data.
+		var historyReport *correlation.HistoryReport
+
+		// bv-perf: Skip history loading if no open issues exist
+		// ComputeStaleness only processes open issues, so loading git history
+		// is wasted work when all issues are closed.
+		hasOpenIssues := false
+		for _, issue := range issues {
+			if issue.Status != model.StatusClosed && issue.Status != model.StatusTombstone {
+				hasOpenIssues = true
+				break
+			}
+		}
+
+		if hasOpenIssues {
+			if cwd, err := os.Getwd(); err == nil {
+				if beadsDir, err := loader.GetBeadsDir(""); err == nil {
+					if beadsPath, err := loader.FindJSONLPath(beadsDir); err == nil {
+						// Use a smaller limit for triage to keep it fast, unless overridden
+						limit := *historyLimit
+						if limit == 500 { // If default
+							limit = 200 // Use smaller default for triage
+						}
+
+						// Validate repo first
+						if correlation.ValidateRepository(cwd) == nil {
+							beadInfos := make([]correlation.BeadInfo, len(issues))
+							for i, issue := range issues {
+								beadInfos[i] = correlation.BeadInfo{
+									ID:     issue.ID,
+									Title:  issue.Title,
+									Status: string(issue.Status),
+								}
+							}
+
+							correlator := correlation.NewCorrelator(cwd, beadsPath)
+							opts := correlation.CorrelatorOptions{Limit: limit}
+
+							// Swallow errors for triage flow - staleness is optional
+							if report, err := correlator.GenerateReport(beadInfos, opts); err == nil {
+								historyReport = report
+							}
+						}
+					}
+				}
+			}
+		}
+
 		// bv-87: Support track/label-aware grouping for multi-agent coordination
 		opts := analysis.TriageOptions{
 			GroupByTrack:  *robotTriageByTrack,
 			GroupByLabel:  *robotTriageByLabel,
-			WaitForPhase2: true,  // Triage needs full graph metrics
-			UseFastConfig: true,  // Use minimal Phase 2 config for robot mode (bv-t1js)
+			WaitForPhase2: true, // Triage needs full graph metrics
+			UseFastConfig: true, // Use minimal Phase 2 config for robot mode (bv-t1js)
+			History:       historyReport,
 		}
 		triage := analysis.ComputeTriageWithOptions(issues, opts)
 
@@ -2516,22 +2973,20 @@ func main() {
 
 		if *robotNext {
 			// Minimal output: just the top pick
+			envelope := NewRobotEnvelope(dataHash)
 			if len(triage.QuickRef.TopPicks) == 0 {
 				output := struct {
-					GeneratedAt string `json:"generated_at"`
-					DataHash    string `json:"data_hash"`
-					AsOf        string `json:"as_of,omitempty"`
-					AsOfCommit  string `json:"as_of_commit,omitempty"`
-					Message     string `json:"message"`
+					RobotEnvelope
+					AsOf       string `json:"as_of,omitempty"`
+					AsOfCommit string `json:"as_of_commit,omitempty"`
+					Message    string `json:"message"`
 				}{
-					GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-					DataHash:    dataHash,
-					AsOf:        *asOf,
-					AsOfCommit:  asOfResolved,
-					Message:     "No actionable items available",
+					RobotEnvelope: envelope,
+					AsOf:          *asOf,
+					AsOfCommit:    asOfResolved,
+					Message:       "No actionable items available",
 				}
-				encoder := json.NewEncoder(os.Stdout)
-				encoder.SetIndent("", "  ")
+				encoder := newRobotEncoder(os.Stdout)
 				if err := encoder.Encode(output); err != nil {
 					fmt.Fprintf(os.Stderr, "Error encoding robot-next: %v\n", err)
 					os.Exit(1)
@@ -2541,33 +2996,30 @@ func main() {
 
 			top := triage.QuickRef.TopPicks[0]
 			output := struct {
-				GeneratedAt string   `json:"generated_at"`
-				DataHash    string   `json:"data_hash"`
-				AsOf        string   `json:"as_of,omitempty"`
-				AsOfCommit  string   `json:"as_of_commit,omitempty"`
-				ID          string   `json:"id"`
-				Title       string   `json:"title"`
-				Score       float64  `json:"score"`
-				Reasons     []string `json:"reasons"`
-				Unblocks    int      `json:"unblocks"`
-				ClaimCmd    string   `json:"claim_command"`
-				ShowCmd     string   `json:"show_command"`
+				RobotEnvelope
+				AsOf       string   `json:"as_of,omitempty"`
+				AsOfCommit string   `json:"as_of_commit,omitempty"`
+				ID         string   `json:"id"`
+				Title      string   `json:"title"`
+				Score      float64  `json:"score"`
+				Reasons    []string `json:"reasons"`
+				Unblocks   int      `json:"unblocks"`
+				ClaimCmd   string   `json:"claim_command"`
+				ShowCmd    string   `json:"show_command"`
 			}{
-				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-				DataHash:    dataHash,
-				AsOf:        *asOf,
-				AsOfCommit:  asOfResolved,
-				ID:          top.ID,
-				Title:       top.Title,
-				Score:       top.Score,
-				Reasons:     top.Reasons,
-				Unblocks:    top.Unblocks,
-				ClaimCmd:    fmt.Sprintf("bd update %s --status=in_progress", top.ID),
-				ShowCmd:     fmt.Sprintf("bd show %s", top.ID),
+				RobotEnvelope: envelope,
+				AsOf:          *asOf,
+				AsOfCommit:    asOfResolved,
+				ID:            top.ID,
+				Title:         top.Title,
+				Score:         top.Score,
+				Reasons:       top.Reasons,
+				Unblocks:      top.Unblocks,
+				ClaimCmd:      fmt.Sprintf("br update %s --status=in_progress", top.ID),
+				ShowCmd:       fmt.Sprintf("br show %s", top.ID),
 			}
 
-			encoder := json.NewEncoder(os.Stdout)
-			encoder.SetIndent("", "  ")
+			encoder := newRobotEncoder(os.Stdout)
 			if err := encoder.Encode(output); err != nil {
 				fmt.Fprintf(os.Stderr, "Error encoding robot-next: %v\n", err)
 				os.Exit(1)
@@ -2716,7 +3168,7 @@ func main() {
 			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 			DataHash:    dataHash,
 			IssueCount:  len(issues),
-			Version:     "1.0.0",
+			Version:     version.Version,
 			Files:       []string{"triage.json", "insights.json", "brief.md", "helpers.md", "meta.json"},
 		}
 		metaJSON, _ := json.MarshalIndent(meta, "", "  ")
@@ -2781,9 +3233,9 @@ func main() {
 				}
 
 				// Claim command
-				sb.WriteString(fmt.Sprintf("# To claim: bd update %s --status=in_progress\n", rec.ID))
+				sb.WriteString(fmt.Sprintf("# To claim: br update %s --status=in_progress\n", rec.ID))
 				// Show command
-				sb.WriteString(fmt.Sprintf("bd show %s\n", rec.ID))
+				sb.WriteString(fmt.Sprintf("br show %s\n", rec.ID))
 				sb.WriteString("\n")
 			}
 
@@ -2791,12 +3243,12 @@ func main() {
 			sb.WriteString("# === Quick Actions ===\n")
 			sb.WriteString("# To claim the top pick:\n")
 			if len(recs) > 0 {
-				sb.WriteString(fmt.Sprintf("# bd update %s --status=in_progress\n", recs[0].ID))
+				sb.WriteString(fmt.Sprintf("# br update %s --status=in_progress\n", recs[0].ID))
 			}
 			sb.WriteString("#\n")
 			sb.WriteString("# To claim all listed items (uncomment to enable):\n")
 			for _, rec := range recs {
-				sb.WriteString(fmt.Sprintf("# bd update %s --status=in_progress\n", rec.ID))
+				sb.WriteString(fmt.Sprintf("# br update %s --status=in_progress\n", rec.ID))
 			}
 		}
 
@@ -2914,8 +3366,7 @@ func main() {
 		// Handle --robot-correlation-stats
 		if *robotCorrelationStats {
 			stats := feedbackStore.GetStats()
-			encoder := json.NewEncoder(os.Stdout)
-			encoder.SetIndent("", "  ")
+			encoder := newRobotEncoder(os.Stdout)
 			if err := encoder.Encode(stats); err != nil {
 				fmt.Fprintf(os.Stderr, "Error encoding stats: %v\n", err)
 				os.Exit(1)
@@ -2998,8 +3449,7 @@ func main() {
 				explanation.Recommendation = fmt.Sprintf("Already has feedback: %s", fb.Type)
 			}
 
-			encoder := json.NewEncoder(os.Stdout)
-			encoder.SetIndent("", "  ")
+			encoder := newRobotEncoder(os.Stdout)
 			if err := encoder.Encode(explanation); err != nil {
 				fmt.Fprintf(os.Stderr, "Error encoding explanation: %v\n", err)
 				os.Exit(1)
@@ -3069,8 +3519,7 @@ func main() {
 				"reason":    *correlationFeedbackReason,
 				"orig_conf": originalConf,
 			}
-			encoder := json.NewEncoder(os.Stdout)
-			encoder.SetIndent("", "  ")
+			encoder := newRobotEncoder(os.Stdout)
 			if err := encoder.Encode(result); err != nil {
 				fmt.Fprintf(os.Stderr, "Error encoding result: %v\n", err)
 				os.Exit(1)
@@ -3140,8 +3589,7 @@ func main() {
 				"reason":    *correlationFeedbackReason,
 				"orig_conf": originalConf,
 			}
-			encoder := json.NewEncoder(os.Stdout)
-			encoder.SetIndent("", "  ")
+			encoder := newRobotEncoder(os.Stdout)
 			if err := encoder.Encode(result); err != nil {
 				fmt.Fprintf(os.Stderr, "Error encoding result: %v\n", err)
 				os.Exit(1)
@@ -3228,8 +3676,20 @@ func main() {
 			orphanReport.Stats.AvgSuspicion = float64(totalSuspicion) / float64(len(filteredCandidates))
 		}
 
+		// Wrap orphan report with standard envelope fields
+		type OrphanOutputEnvelope struct {
+			*correlation.OrphanReport
+			OutputFormat string `json:"output_format,omitempty"`
+			Version      string `json:"version,omitempty"`
+		}
+		output := OrphanOutputEnvelope{
+			OrphanReport: orphanReport,
+			OutputFormat: robotOutputFormat,
+			Version:      version.Version,
+		}
+
 		encoder := newRobotEncoder(os.Stdout)
-		if err := encoder.Encode(orphanReport); err != nil {
+		if err := encoder.Encode(output); err != nil {
 			fmt.Fprintf(os.Stderr, "Error encoding orphan report: %v\n", err)
 			os.Exit(1)
 		}
@@ -3290,18 +3750,16 @@ func main() {
 		if *fileHotspots {
 			// Output hotspots
 			type HotspotsOutput struct {
-				GeneratedAt time.Time                  `json:"generated_at"`
-				DataHash    string                     `json:"data_hash"`
-				Hotspots    []correlation.FileHotspot  `json:"hotspots"`
-				Stats       correlation.FileIndexStats `json:"stats"`
+				RobotEnvelope
+				Hotspots []correlation.FileHotspot  `json:"hotspots"`
+				Stats    correlation.FileIndexStats `json:"stats"`
 			}
 
 			hotspots := fileLookup.GetHotspots(*hotspotsLimit)
 			output := HotspotsOutput{
-				GeneratedAt: time.Now(),
-				DataHash:    report.DataHash,
-				Hotspots:    hotspots,
-				Stats:       fileLookup.GetStats(),
+				RobotEnvelope: NewRobotEnvelope(report.DataHash),
+				Hotspots:      hotspots,
+				Stats:         fileLookup.GetStats(),
 			}
 
 			if err := encoder.Encode(output); err != nil {
@@ -3318,8 +3776,7 @@ func main() {
 			}
 
 			type FileBeadsOutput struct {
-				GeneratedAt time.Time                   `json:"generated_at"`
-				DataHash    string                      `json:"data_hash"`
+				RobotEnvelope
 				FilePath    string                      `json:"file_path"`
 				TotalBeads  int                         `json:"total_beads"`
 				OpenBeads   []correlation.BeadReference `json:"open_beads"`
@@ -3327,12 +3784,11 @@ func main() {
 			}
 
 			output := FileBeadsOutput{
-				GeneratedAt: time.Now(),
-				DataHash:    report.DataHash,
-				FilePath:    *robotFileBeads,
-				TotalBeads:  result.TotalBeads,
-				OpenBeads:   result.OpenBeads,
-				ClosedBeads: result.ClosedBeads,
+				RobotEnvelope: NewRobotEnvelope(report.DataHash),
+				FilePath:      *robotFileBeads,
+				TotalBeads:    result.TotalBeads,
+				OpenBeads:     result.OpenBeads,
+				ClosedBeads:   result.ClosedBeads,
 			}
 
 			if err := encoder.Encode(output); err != nil {
@@ -3394,8 +3850,7 @@ func main() {
 		impactResult := fileLookup.ImpactAnalysis(files)
 
 		type ImpactOutput struct {
-			GeneratedAt   time.Time                  `json:"generated_at"`
-			DataHash      string                     `json:"data_hash"`
+			RobotEnvelope
 			Files         []string                   `json:"files"`
 			RiskLevel     string                     `json:"risk_level"`
 			RiskScore     float64                    `json:"risk_score"`
@@ -3405,8 +3860,7 @@ func main() {
 		}
 
 		output := ImpactOutput{
-			GeneratedAt:   time.Now(),
-			DataHash:      report.DataHash,
+			RobotEnvelope: NewRobotEnvelope(report.DataHash),
 			Files:         impactResult.Files,
 			RiskLevel:     impactResult.RiskLevel,
 			RiskScore:     impactResult.RiskScore,
@@ -3436,7 +3890,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		issues, err := loader.LoadIssues(cwd)
+		issues, err := datasource.LoadIssues(cwd)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading beads: %v\n", err)
 			os.Exit(1)
@@ -3475,8 +3929,7 @@ func main() {
 		result := fileLookup.GetRelatedFiles(*robotFileRelations, *relationsThreshold, *relationsLimit)
 
 		type RelationsOutput struct {
-			GeneratedAt  time.Time                   `json:"generated_at"`
-			DataHash     string                      `json:"data_hash"`
+			RobotEnvelope
 			FilePath     string                      `json:"file_path"`
 			TotalCommits int                         `json:"total_commits"`
 			Threshold    float64                     `json:"threshold"`
@@ -3484,12 +3937,11 @@ func main() {
 		}
 
 		output := RelationsOutput{
-			GeneratedAt:  time.Now(),
-			DataHash:     report.DataHash,
-			FilePath:     result.FilePath,
-			TotalCommits: result.TotalCommits,
-			Threshold:    result.Threshold,
-			RelatedFiles: result.RelatedFiles,
+			RobotEnvelope: NewRobotEnvelope(report.DataHash),
+			FilePath:      result.FilePath,
+			TotalCommits:  result.TotalCommits,
+			Threshold:     result.Threshold,
+			RelatedFiles:  result.RelatedFiles,
 		}
 
 		encoder := newRobotEncoder(os.Stdout)
@@ -3513,7 +3965,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		issues, err := loader.LoadIssues(cwd)
+		issues, err := datasource.LoadIssues(cwd)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading beads: %v\n", err)
 			os.Exit(1)
@@ -3571,15 +4023,19 @@ func main() {
 			os.Exit(1)
 		}
 
-		// Add data hash to output
+		// Add envelope fields to output
 		type RelatedWorkOutput struct {
 			*correlation.RelatedWorkResult
-			DataHash string `json:"data_hash"`
+			DataHash     string `json:"data_hash"`
+			OutputFormat string `json:"output_format,omitempty"`
+			Version      string `json:"version,omitempty"`
 		}
 
 		output := RelatedWorkOutput{
 			RelatedWorkResult: result,
 			DataHash:          report.DataHash,
+			OutputFormat:      robotOutputFormat,
+			Version:           version.Version,
 		}
 
 		encoder := newRobotEncoder(os.Stdout)
@@ -3598,7 +4054,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		issues, err := loader.LoadIssues(cwd)
+		issues, err := datasource.LoadIssues(cwd)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading beads: %v\n", err)
 			os.Exit(1)
@@ -3613,18 +4069,16 @@ func main() {
 		}
 
 		type BlockerChainOutput struct {
-			GeneratedAt time.Time                    `json:"generated_at"`
-			DataHash    string                       `json:"data_hash"`
-			Result      *analysis.BlockerChainResult `json:"result"`
+			RobotEnvelope
+			Result *analysis.BlockerChainResult `json:"result"`
 		}
 
 		// Compute data hash for consistency
 		dataHash := analysis.ComputeDataHash(issues)
 
 		output := BlockerChainOutput{
-			GeneratedAt: time.Now(),
-			DataHash:    dataHash,
-			Result:      result,
+			RobotEnvelope: NewRobotEnvelope(dataHash),
+			Result:        result,
 		}
 
 		encoder := newRobotEncoder(os.Stdout)
@@ -3657,7 +4111,7 @@ func main() {
 		}
 
 		// Load issues
-		issues, err := loader.LoadIssues(cwd)
+		issues, err := datasource.LoadIssues(cwd)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading beads: %v\n", err)
 			os.Exit(1)
@@ -3702,11 +4156,22 @@ func main() {
 			depth = 3
 		}
 
-		// Generate result
+		// Generate result and wrap with envelope fields
 		result := network.ToResult(beadID, depth)
 
+		type ImpactNetworkEnvelope struct {
+			*correlation.ImpactNetworkResult
+			OutputFormat string `json:"output_format,omitempty"`
+			Version      string `json:"version,omitempty"`
+		}
+		output := ImpactNetworkEnvelope{
+			ImpactNetworkResult: result,
+			OutputFormat:        robotOutputFormat,
+			Version:             version.Version,
+		}
+
 		encoder := newRobotEncoder(os.Stdout)
-		if err := encoder.Encode(result); err != nil {
+		if err := encoder.Encode(output); err != nil {
 			fmt.Fprintf(os.Stderr, "Error encoding impact network: %v\n", err)
 			os.Exit(1)
 		}
@@ -3726,7 +4191,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		issues, err := loader.LoadIssues(cwd)
+		issues, err := datasource.LoadIssues(cwd)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading beads: %v\n", err)
 			os.Exit(1)
@@ -3778,8 +4243,20 @@ func main() {
 			os.Exit(1)
 		}
 
+		// Wrap with envelope fields
+		type CausalityEnvelope struct {
+			*correlation.CausalityResult
+			OutputFormat string `json:"output_format,omitempty"`
+			Version      string `json:"version,omitempty"`
+		}
+		output := CausalityEnvelope{
+			CausalityResult: result,
+			OutputFormat:     robotOutputFormat,
+			Version:          version.Version,
+		}
+
 		encoder := newRobotEncoder(os.Stdout)
-		if err := encoder.Encode(result); err != nil {
+		if err := encoder.Encode(output); err != nil {
 			fmt.Fprintf(os.Stderr, "Error encoding causality result: %v\n", err)
 			os.Exit(1)
 		}
@@ -3800,6 +4277,8 @@ func main() {
 			os.Exit(1)
 		}
 
+		dataHash := analysis.ComputeDataHash(issues)
+
 		if *robotSprintShow != "" {
 			// Find specific sprint
 			var found *model.Sprint
@@ -3813,26 +4292,32 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Sprint not found: %s\n", *robotSprintShow)
 				os.Exit(1)
 			}
-			// Output single sprint as JSON
-			encoder := json.NewEncoder(os.Stdout)
-			encoder.SetIndent("", "  ")
-			if err := encoder.Encode(found); err != nil {
+			// Wrap sprint with standard envelope
+			type SprintShowOutput struct {
+				RobotEnvelope
+				Sprint *model.Sprint `json:"sprint"`
+			}
+			output := SprintShowOutput{
+				RobotEnvelope: NewRobotEnvelope(dataHash),
+				Sprint:        found,
+			}
+			encoder := newRobotEncoder(os.Stdout)
+			if err := encoder.Encode(output); err != nil {
 				fmt.Fprintf(os.Stderr, "Error encoding sprint: %v\n", err)
 				os.Exit(1)
 			}
 		} else {
 			// Output all sprints as JSON
 			output := struct {
-				GeneratedAt time.Time      `json:"generated_at"`
+				RobotEnvelope
 				SprintCount int            `json:"sprint_count"`
 				Sprints     []model.Sprint `json:"sprints"`
 			}{
-				GeneratedAt: time.Now().UTC(),
-				SprintCount: len(sprints),
-				Sprints:     sprints,
+				RobotEnvelope: NewRobotEnvelope(dataHash),
+				SprintCount:   len(sprints),
+				Sprints:       sprints,
 			}
-			encoder := json.NewEncoder(os.Stdout)
-			encoder.SetIndent("", "  ")
+			encoder := newRobotEncoder(os.Stdout)
 			if err := encoder.Encode(output); err != nil {
 				fmt.Fprintf(os.Stderr, "Error encoding sprints: %v\n", err)
 				os.Exit(1)
@@ -3886,6 +4371,7 @@ func main() {
 		// Build burndown data
 		now := time.Now()
 		burndown := calculateBurndownAt(targetSprint, issues, now)
+		burndown.RobotEnvelope = NewRobotEnvelope(analysis.ComputeDataHash(issues))
 		issueMap := make(map[string]model.Issue, len(issues))
 		for _, iss := range issues {
 			issueMap[iss.ID] = iss
@@ -3971,7 +4457,7 @@ func main() {
 			LatestETA     time.Time `json:"latest_eta"`
 		}
 		type ForecastOutput struct {
-			GeneratedAt   time.Time              `json:"generated_at"`
+			RobotEnvelope
 			Agents        int                    `json:"agents"`
 			Filters       map[string]string      `json:"filters,omitempty"`
 			ForecastCount int                    `json:"forecast_count"`
@@ -4040,7 +4526,7 @@ func main() {
 		}
 
 		output := ForecastOutput{
-			GeneratedAt:   now.UTC(),
+			RobotEnvelope: NewRobotEnvelope(analysis.ComputeDataHash(issues)),
 			Agents:        agents,
 			ForecastCount: len(forecasts),
 			Forecasts:     forecasts,
@@ -4215,7 +4701,7 @@ func main() {
 
 		// Build output
 		type CapacityOutput struct {
-			GeneratedAt       time.Time    `json:"generated_at"`
+			RobotEnvelope
 			Agents            int          `json:"agents"`
 			Label             string       `json:"label,omitempty"`
 			OpenIssueCount    int          `json:"open_issue_count"`
@@ -4233,7 +4719,7 @@ func main() {
 		}
 
 		output := CapacityOutput{
-			GeneratedAt:       now.UTC(),
+			RobotEnvelope:     NewRobotEnvelope(analysis.ComputeDataHash(issues)),
 			Agents:            agents,
 			OpenIssueCount:    len(openIssues),
 			TotalMinutes:      totalMinutes,
@@ -4329,8 +4815,7 @@ func main() {
 				Diff:             diff,
 			}
 
-			encoder := json.NewEncoder(os.Stdout)
-			encoder.SetIndent("", "  ")
+			encoder := newRobotEncoder(os.Stdout)
 			if err := encoder.Encode(output); err != nil {
 				fmt.Fprintf(os.Stderr, "Error encoding diff: %v\n", err)
 				os.Exit(1)
@@ -4410,7 +4895,7 @@ func main() {
 	}
 
 	if len(issues) == 0 {
-		fmt.Println("No issues found. Create some with 'bd create'!")
+		fmt.Println("No issues found. Create some with 'br create'!")
 		os.Exit(0)
 	}
 
@@ -5332,9 +5817,9 @@ func copyViewerAssets(outputDir, title string) error {
 		src := filepath.Join(assetsDir, file)
 		dst := filepath.Join(outputDir, file)
 
-		// Special handling for index.html to replace title
-		if file == "index.html" && title != "" {
-			if err := copyFileWithTitleReplacement(src, dst, title); err != nil {
+		// Special handling for index.html to replace title and add cache-busting
+		if file == "index.html" {
+			if err := copyFileWithTitleAndCacheBusting(src, dst, title); err != nil {
 				return fmt.Errorf("copy %s: %w", file, err)
 			}
 			continue
@@ -5365,6 +5850,13 @@ func copyViewerAssets(outputDir, title string) error {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("copy wasm: %w", err)
 		}
+	}
+
+	// Always add GitHub Actions workflow for reliable Pages deployment
+	// This ensures the workflow is in the bundle regardless of deployment target
+	if err := export.WriteGitHubActionsWorkflow(outputDir); err != nil {
+		// Non-fatal - just log a warning
+		fmt.Printf("  Warning: Could not add GitHub Actions workflow: %v\n", err)
 	}
 
 	return nil
@@ -5443,16 +5935,25 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-// copyFileWithTitleReplacement copies a file while replacing the default title.
-func copyFileWithTitleReplacement(src, dst, title string) error {
+// copyFileWithTitleAndCacheBusting copies a file while replacing the default title
+// and adding cache-busting query parameters to script tags.
+func copyFileWithTitleAndCacheBusting(src, dst, title string) error {
 	content, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
 
-	// Replace title in <title> tag and in the h1 header
-	result := strings.Replace(string(content), "<title>Beads Viewer</title>", "<title>"+title+"</title>", 1)
-	result = strings.Replace(result, `<h1 class="text-xl font-semibold">Beads Viewer</h1>`, `<h1 class="text-xl font-semibold">`+title+`</h1>`, 1)
+	result := string(content)
+
+	// Replace title in <title> tag and in the h1 header (if title provided)
+	if title != "" {
+		safeTitle := html.EscapeString(title)
+		result = strings.Replace(result, "<title>Beads Viewer</title>", "<title>"+safeTitle+"</title>", 1)
+		result = strings.Replace(result, `<h1 class="text-xl font-semibold">Beads Viewer</h1>`, `<h1 class="text-xl font-semibold">`+safeTitle+`</h1>`, 1)
+	}
+
+	// Always add cache-busting to script tags to prevent CDN from serving stale JS files
+	result = export.AddScriptCacheBusting(result)
 
 	return os.WriteFile(dst, []byte(result), 0644)
 }
@@ -5756,14 +6257,15 @@ func escapeMarkdownTableCell(s string) string {
 }
 
 // runPreviewServer starts a local HTTP server to preview the static site.
-func runPreviewServer(dir string) error {
+func runPreviewServer(dir string, liveReload bool) error {
 	cfg := export.DefaultPreviewConfig()
 	cfg.BundlePath = dir
+	cfg.LiveReload = liveReload
 	return export.StartPreviewWithConfig(cfg)
 }
 
 // runPagesWizard runs the interactive deployment wizard (bv-10g).
-func runPagesWizard(issues []model.Issue, beadsPath string) error {
+func runPagesWizard(beadsPath string) error {
 	wizard := export.NewWizard(beadsPath)
 
 	// Run interactive wizard to collect configuration
@@ -5773,6 +6275,15 @@ func runPagesWizard(issues []model.Issue, beadsPath string) error {
 	}
 
 	config := wizard.GetConfig()
+
+	// Resolve the actual source of issues for this deployment.
+	// This ensures updates always use the originally-deployed dataset,
+	// even if the user runs bv from a different directory.
+	source, err := resolvePagesSource(config, beadsPath)
+	if err != nil {
+		return err
+	}
+	issues := source.Issues
 
 	// Filter issues based on config
 	exportIssues := issues
@@ -5803,6 +6314,10 @@ func runPagesWizard(issues []model.Issue, beadsPath string) error {
 
 	// Perform export
 	wizard.PerformExport(bundlePath)
+
+	if source.BeadsDir != "" {
+		fmt.Printf("  -> Using beads source: %s (%s)\n", source.BeadsDir, source.Reason)
+	}
 
 	fmt.Println("Exporting static site...")
 	fmt.Printf("  -> Loading %d issues\n", len(exportIssues))
@@ -5920,8 +6435,8 @@ func runPagesWizard(issues []model.Issue, beadsPath string) error {
 			}
 			wizard.PrintSuccess(result)
 		} else {
-			// Perform deployment
-			result, err := wizard.PerformDeploy()
+			// Perform deployment with issue count for verification
+			result, err := wizard.PerformDeployWithIssueCount(len(exportIssues))
 			if err != nil {
 				return err
 			}
@@ -5937,16 +6452,387 @@ func runPagesWizard(issues []model.Issue, beadsPath string) error {
 		wizard.PrintSuccess(result)
 	}
 
+	// Persist source metadata and last-export info for reliable updates.
+	if source.BeadsDir != "" {
+		config.SourceBeadsDir = source.BeadsDir
+	}
+	if source.RepoRoot != "" {
+		config.SourceRepoRoot = source.RepoRoot
+	}
+	config.LastIssueCount = len(exportIssues)
+	config.LastDataHash = analysis.ComputeDataHash(exportIssues)
+
 	// Save config for next run
 	export.SaveWizardConfig(config)
 
 	return nil
 }
 
+type pagesSource struct {
+	Issues   []model.Issue
+	BeadsDir string
+	RepoRoot string
+	Reason   string
+}
+
+type pagesSourceCandidate struct {
+	BeadsDir string
+	Reason   string
+}
+
+func resolvePagesSource(config *export.WizardConfig, beadsPath string) (pagesSource, error) {
+	var candidates []pagesSourceCandidate
+	seen := map[string]bool{}
+
+	addCandidate := func(dir, reason string) {
+		if dir == "" {
+			return
+		}
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+		if seen[dir] {
+			return
+		}
+		seen[dir] = true
+		candidates = append(candidates, pagesSourceCandidate{BeadsDir: dir, Reason: reason})
+	}
+
+	if config.SourceBeadsDir != "" {
+		addCandidate(config.SourceBeadsDir, "saved source")
+	}
+	if config.SourceRepoRoot != "" {
+		addCandidate(filepath.Join(config.SourceRepoRoot, ".beads"), "saved repo root")
+	}
+	if beadsPath != "" {
+		addCandidate(filepath.Dir(beadsPath), "current beads path")
+	}
+	if dir, err := loader.GetBeadsDir(""); err == nil {
+		addCandidate(dir, "current repo")
+	}
+
+	var lastErr error
+	for _, cand := range candidates {
+		if info, err := os.Stat(cand.BeadsDir); err != nil || !info.IsDir() {
+			continue
+		}
+		issues, err := loadIssuesFromBeadsDir(cand.BeadsDir)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		src := pagesSource{
+			Issues:   issues,
+			BeadsDir: cand.BeadsDir,
+			RepoRoot: filepath.Dir(cand.BeadsDir),
+			Reason:   cand.Reason,
+		}
+
+		// If the issue count looks wildly off, try to auto-detect a better source.
+		if isSuspiciousIssueCount(len(issues), config.LastIssueCount) {
+			if improved, ok := findBetterPagesSource(config, src, beadsPath); ok {
+				return improved, nil
+			}
+		}
+		return src, nil
+	}
+
+	if lastErr != nil {
+		return pagesSource{}, lastErr
+	}
+	return pagesSource{}, fmt.Errorf("no valid beads source found for pages export")
+}
+
+func isSuspiciousIssueCount(current, expected int) bool {
+	if current == 0 {
+		return true
+	}
+	if expected <= 0 {
+		return false
+	}
+	threshold := expected / 5
+	if threshold < 5 {
+		threshold = 5
+	}
+	return current < threshold
+}
+
+func findBetterPagesSource(config *export.WizardConfig, current pagesSource, beadsPath string) (pagesSource, bool) {
+	expected := config.LastIssueCount
+	currentCount := len(current.Issues)
+	currentDiff := absInt(currentCount - expected)
+
+	repoHint := strings.ToLower(strings.TrimSpace(config.RepoName))
+	altHint := repoHint
+	if strings.HasPrefix(altHint, "beads-for-") {
+		altHint = strings.TrimPrefix(altHint, "beads-for-")
+	}
+
+	roots := []string{}
+	seenRoots := map[string]bool{}
+	addRoot := func(root string) {
+		if root == "" {
+			return
+		}
+		if abs, err := filepath.Abs(root); err == nil {
+			root = abs
+		}
+		if seenRoots[root] {
+			return
+		}
+		if info, err := os.Stat(root); err != nil || !info.IsDir() {
+			return
+		}
+		seenRoots[root] = true
+		roots = append(roots, root)
+	}
+
+	if config.SourceRepoRoot != "" {
+		addRoot(config.SourceRepoRoot)
+	}
+	if beadsPath != "" {
+		addRoot(filepath.Dir(filepath.Dir(beadsPath)))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		addRoot(cwd)
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		addRoot(home)
+	}
+	if info, err := os.Stat("/dp"); err == nil && info.IsDir() {
+		addRoot("/dp")
+	}
+
+	bestDir := ""
+	bestCount := 0
+	bestDiff := 0
+	bestHintDir := ""
+	bestHintCount := 0
+	bestHintDiff := 0
+
+	for _, root := range roots {
+		for _, beadsDir := range discoverBeadsDirs(root, 4) {
+			if beadsDir == current.BeadsDir {
+				continue
+			}
+			count, err := countIssuesInBeadsDir(beadsDir)
+			if err != nil || count == 0 {
+				continue
+			}
+
+			pathLower := strings.ToLower(beadsDir)
+			hintMatch := repoHint != "" && (strings.Contains(pathLower, repoHint) || strings.Contains(pathLower, altHint))
+
+			if expected > 0 {
+				diff := absInt(count - expected)
+				if bestDir == "" || diff < bestDiff || (diff == bestDiff && count > bestCount) {
+					bestDir = beadsDir
+					bestCount = count
+					bestDiff = diff
+				}
+				if hintMatch && (bestHintDir == "" || diff < bestHintDiff || (diff == bestHintDiff && count > bestHintCount)) {
+					bestHintDir = beadsDir
+					bestHintCount = count
+					bestHintDiff = diff
+				}
+			} else if count > bestCount {
+				if hintMatch && count > bestHintCount {
+					bestHintDir = beadsDir
+					bestHintCount = count
+				} else if bestHintDir == "" {
+					bestDir = beadsDir
+					bestCount = count
+				}
+			}
+		}
+	}
+
+	if bestHintDir != "" && (bestDir == "" || bestHintDiff <= bestDiff) {
+		bestDir = bestHintDir
+		bestCount = bestHintCount
+		bestDiff = bestHintDiff
+	}
+
+	if bestDir == "" {
+		return pagesSource{}, false
+	}
+
+	if expected > 0 && bestDiff >= currentDiff {
+		return pagesSource{}, false
+	}
+	if expected == 0 && bestCount <= currentCount {
+		return pagesSource{}, false
+	}
+
+	issues, err := loadIssuesFromBeadsDir(bestDir)
+	if err != nil {
+		return pagesSource{}, false
+	}
+	return pagesSource{
+		Issues:   issues,
+		BeadsDir: bestDir,
+		RepoRoot: filepath.Dir(bestDir),
+		Reason:   "auto-detected better source",
+	}, true
+}
+
+func discoverBeadsDirs(root string, maxDepth int) []string {
+	var dirs []string
+	root = filepath.Clean(root)
+	sep := string(os.PathSeparator)
+
+	skip := map[string]bool{
+		".git":         true,
+		"node_modules": true,
+		"vendor":       true,
+		"dist":         true,
+		"build":        true,
+		"target":       true,
+		".cache":       true,
+		".bv":          true,
+		".idea":        true,
+		".vscode":      true,
+	}
+
+	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() {
+			return nil
+		}
+
+		name := d.Name()
+		if skip[name] && path != root {
+			return fs.SkipDir
+		}
+
+		rel := strings.TrimPrefix(strings.TrimPrefix(path, root), sep)
+		if rel != "" {
+			if depth := len(strings.Split(rel, sep)); depth > maxDepth {
+				return fs.SkipDir
+			}
+		}
+
+		if name == ".beads" {
+			dirs = append(dirs, path)
+			return fs.SkipDir
+		}
+		return nil
+	})
+	return dirs
+}
+
+func countIssuesInBeadsDir(beadsDir string) (int, error) {
+	if path, typ := metadataPreferredSource(beadsDir); path != "" {
+		info, err := os.Stat(path)
+		if err == nil {
+			priority := datasource.PriorityJSONLLocal
+			if typ == datasource.SourceTypeSQLite {
+				priority = datasource.PrioritySQLite
+			}
+			source := datasource.DataSource{
+				Type:     typ,
+				Path:     path,
+				Priority: priority,
+				ModTime:  info.ModTime(),
+				Size:     info.Size(),
+			}
+			if err := datasource.ValidateSource(&source); err == nil {
+				return source.IssueCount, nil
+			}
+		}
+	}
+
+	sources, err := datasource.DiscoverSources(datasource.DiscoveryOptions{
+		BeadsDir:               beadsDir,
+		ValidateAfterDiscovery: true,
+		IncludeInvalid:         false,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if len(sources) == 0 {
+		return 0, fmt.Errorf("no sources in %s", beadsDir)
+	}
+	result, err := datasource.SelectBestSourceDetailed(sources, datasource.DefaultSelectionOptions())
+	if err != nil {
+		return 0, err
+	}
+	return result.Selected.IssueCount, nil
+}
+
+type beadsMetadata struct {
+	Database    string `json:"database"`
+	JSONLExport string `json:"jsonl_export"`
+}
+
+func metadataPreferredSource(beadsDir string) (string, datasource.SourceType) {
+	metaPath := filepath.Join(beadsDir, "metadata.json")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return "", ""
+	}
+	var meta beadsMetadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return "", ""
+	}
+	if meta.Database != "" {
+		path := meta.Database
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(beadsDir, path)
+		}
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, datasource.SourceTypeSQLite
+		}
+	}
+	if meta.JSONLExport != "" {
+		path := meta.JSONLExport
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(beadsDir, path)
+		}
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, datasource.SourceTypeJSONLLocal
+		}
+	}
+	return "", ""
+}
+
+func loadIssuesFromBeadsDir(beadsDir string) ([]model.Issue, error) {
+	if path, typ := metadataPreferredSource(beadsDir); path != "" {
+		switch typ {
+		case datasource.SourceTypeSQLite:
+			reader, err := datasource.NewSQLiteReader(datasource.DataSource{
+				Type: datasource.SourceTypeSQLite,
+				Path: path,
+			})
+			if err != nil {
+				break
+			}
+			defer reader.Close()
+			if issues, err := reader.LoadIssues(); err == nil {
+				return issues, nil
+			}
+		case datasource.SourceTypeJSONLLocal:
+			if issues, err := loader.LoadIssuesFromFile(path); err == nil {
+				return issues, nil
+			}
+		}
+	}
+	return datasource.LoadIssuesFromDir(beadsDir)
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 // BurndownOutput represents the JSON output for --robot-burndown (bv-159)
 type BurndownOutput struct {
-	GeneratedAt       time.Time             `json:"generated_at"`
-	SprintID          string                `json:"sprint_id"`
+	RobotEnvelope
+	SprintID string `json:"sprint_id"`
 	SprintName        string                `json:"sprint_name"`
 	StartDate         time.Time             `json:"start_date"`
 	EndDate           time.Time             `json:"end_date"`
@@ -6271,8 +7157,7 @@ func calculateBurndownAt(sprint *model.Sprint, issues []model.Issue, now time.Ti
 	idealLine := generateIdealLine(sprint, totalIssues)
 
 	return BurndownOutput{
-		GeneratedAt:       now.UTC(),
-		SprintID:          sprint.ID,
+		SprintID: sprint.ID,
 		SprintName:        sprint.Name,
 		StartDate:         sprint.StartDate,
 		EndDate:           sprint.EndDate,
@@ -6544,13 +7429,669 @@ func generateHistoryForExport(issues []model.Issue) (*TimeTravelHistory, error) 
 	}, nil
 }
 
-// newRobotEncoder creates a JSON encoder for robot mode output.
+var robotOutputFormat = "json"
+var robotToonEncodeOptions = toon.DefaultEncodeOptions()
+var robotShowToonStats bool
+
+// RobotEnvelope is the standard envelope for all robot command outputs.
+// All robot outputs MUST include these fields for consistency.
+type RobotEnvelope struct {
+	GeneratedAt  string `json:"generated_at"`            // RFC3339 timestamp
+	DataHash     string `json:"data_hash"`               // Fingerprint of source data
+	OutputFormat string `json:"output_format,omitempty"` // "json" or "toon"
+	Version      string `json:"version,omitempty"`       // bv version (e.g., "1.0.0")
+}
+
+// RobotMeta contains optional timing and computation metadata.
+// Commands that perform async/phased analysis should include this.
+type RobotMeta struct {
+	Phase2Ready bool              `json:"phase2_ready,omitempty"` // True if all async metrics computed
+	Timings     map[string]string `json:"timings,omitempty"`      // Per-metric timing info
+	CacheHit    bool              `json:"cache_hit,omitempty"`    // True if results from cache
+	IssueCount  int               `json:"issue_count,omitempty"`  // Number of issues analyzed
+}
+
+// NewRobotEnvelope creates a standard envelope for robot output.
+func NewRobotEnvelope(dataHash string) RobotEnvelope {
+	return RobotEnvelope{
+		GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
+		DataHash:     dataHash,
+		OutputFormat: robotOutputFormat,
+		Version:      version.Version,
+	}
+}
+
+type robotEncoder interface {
+	Encode(v any) error
+}
+
+type toonRobotEncoder struct {
+	w io.Writer
+}
+
+func (e *toonRobotEncoder) Encode(v any) error {
+	if !toon.Available() {
+		fmt.Fprintln(os.Stderr, "warning: tru not available; falling back to JSON")
+		return newJSONRobotEncoder(e.w).Encode(v)
+	}
+
+	out, err := toon.EncodeWithOptions(v, robotToonEncodeOptions)
+	if err != nil {
+		return err
+	}
+
+	// json.Encoder.Encode always terminates with a newline; match that behavior for TOON.
+	out = strings.TrimRight(out, "\n")
+
+	if robotShowToonStats {
+		if jsonBytes, jerr := json.Marshal(v); jerr == nil {
+			jsonTokens := estimateTokens(string(jsonBytes))
+			toonTokens := estimateTokens(out)
+			savings := 0
+			if jsonTokens > 0 && toonTokens <= jsonTokens {
+				savings = int((1.0 - (float64(toonTokens) / float64(jsonTokens))) * 100.0)
+			}
+			fmt.Fprintf(os.Stderr, "[stats] JSON≈%d tok, TOON≈%d tok (%d%% savings)\n", jsonTokens, toonTokens, savings)
+		}
+	}
+
+	_, err = io.WriteString(e.w, out+"\n")
+	return err
+}
+
+// newJSONRobotEncoder creates a JSON encoder for robot mode output.
 // By default, output is compact (no indentation) for performance.
 // Set BV_PRETTY_JSON=1 to enable pretty-printing for human readability.
-func newRobotEncoder(w io.Writer) *json.Encoder {
+func newJSONRobotEncoder(w io.Writer) *json.Encoder {
 	encoder := json.NewEncoder(w)
 	if os.Getenv("BV_PRETTY_JSON") == "1" {
 		encoder.SetIndent("", "  ")
 	}
 	return encoder
+}
+
+// newRobotEncoder creates an encoder for robot mode output.
+//
+// Default output is JSON. Use `--format toon` (or BV_OUTPUT_FORMAT/TOON_DEFAULT_FORMAT)
+// to emit TOON for agent-friendly token savings.
+func newRobotEncoder(w io.Writer) robotEncoder {
+	if robotOutputFormat == "toon" {
+		return &toonRobotEncoder{w: w}
+	}
+	return newJSONRobotEncoder(w)
+}
+
+func resolveRobotOutputFormat(cli string) string {
+	format := strings.TrimSpace(cli)
+	if format == "" {
+		format = strings.TrimSpace(os.Getenv("BV_OUTPUT_FORMAT"))
+	}
+	if format == "" {
+		format = strings.TrimSpace(os.Getenv("TOON_DEFAULT_FORMAT"))
+	}
+	if format == "" {
+		format = "json"
+	}
+	return strings.ToLower(format)
+}
+
+func resolveToonEncodeOptionsFromEnv() toon.EncodeOptions {
+	opts := toon.DefaultEncodeOptions()
+
+	if v := strings.TrimSpace(os.Getenv("TOON_KEY_FOLDING")); v != "" {
+		opts.KeyFolding = v
+	}
+	if v := strings.TrimSpace(os.Getenv("TOON_INDENT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			// Be conservative; tru supports 0..=16 but clamp to avoid surprising output.
+			if n < 0 {
+				n = 0
+			}
+			if n > 16 {
+				n = 16
+			}
+			opts.Indent = n
+		}
+	}
+
+	return opts
+}
+
+func estimateTokens(s string) int {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return 0
+	}
+	// Coarse heuristic; good enough for comparing JSON vs TOON output size.
+	return (len(trimmed) + 3) / 4
+}
+
+// generateRobotDocs returns machine-readable documentation for AI agents (bd-2v50).
+// Topics: guide, commands, examples, env, exit-codes, all.
+func generateRobotDocs(topic string) map[string]interface{} {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result := map[string]interface{}{
+		"generated_at":  now,
+		"output_format": robotOutputFormat,
+		"version":       version.Version,
+		"topic":         topic,
+	}
+
+	guide := map[string]interface{}{
+		"description": "bv (Beads Viewer) provides structural analysis of the beads issue tracker DAG. It is the primary interface for AI agents to understand project state, plan work, and discover high-impact tasks.",
+		"quickstart": []string{
+			"bv --robot-triage               # Full triage with recommendations",
+			"bv --robot-next                  # Single top pick for immediate work",
+			"bv --robot-plan                  # Dependency-respecting execution plan",
+			"bv --robot-insights              # Deep graph analysis (PageRank, betweenness, etc.)",
+			"bv --robot-triage-by-track       # Parallel work streams for multi-agent coordination",
+			"bv --robot-schema                # JSON Schema definitions for all commands",
+		},
+		"data_source": ".beads/issues.jsonl and git history (correlations)",
+		"output_modes": map[string]string{
+			"json": "Default structured output",
+			"toon": "Token-optimized notation (saves ~30-50% tokens)",
+		},
+	}
+
+	type cmdDoc struct {
+		Flag        string   `json:"flag"`
+		Description string   `json:"description"`
+		KeyFields   []string `json:"key_fields,omitempty"`
+		Params      []string `json:"params,omitempty"`
+		NeedsIssues bool     `json:"needs_issues"`
+	}
+
+	commands := map[string]cmdDoc{
+		"robot-triage": {
+			Flag: "--robot-triage", Description: "Unified triage: top picks, recommendations, quick wins, blockers, project health, velocity.",
+			KeyFields:   []string{"triage.quick_ref.top_picks", "triage.recommendations", "triage.quick_wins", "triage.blockers_to_clear", "triage.project_health"},
+			NeedsIssues: true,
+		},
+		"robot-next": {
+			Flag: "--robot-next", Description: "Single top recommendation with claim/show commands.",
+			KeyFields:   []string{"id", "title", "score", "reasons", "unblocks", "claim_command", "show_command"},
+			NeedsIssues: true,
+		},
+		"robot-plan": {
+			Flag: "--robot-plan", Description: "Dependency-respecting execution plan with parallel tracks.",
+			KeyFields:   []string{"tracks", "items", "unblocks", "summary"},
+			NeedsIssues: true,
+		},
+		"robot-insights": {
+			Flag: "--robot-insights", Description: "Deep graph analysis: PageRank, betweenness, HITS, eigenvector, k-core, cycle detection.",
+			KeyFields:   []string{"pagerank", "betweenness", "hits", "eigenvector", "k_core", "cycles"},
+			NeedsIssues: true,
+		},
+		"robot-priority": {
+			Flag: "--robot-priority", Description: "Priority misalignment detection: items whose graph importance differs from assigned priority.",
+			KeyFields:   []string{"misalignments", "suggestions"},
+			NeedsIssues: true,
+		},
+		"robot-triage-by-track": {
+			Flag: "--robot-triage-by-track", Description: "Triage grouped by independent parallel execution tracks.",
+			KeyFields:   []string{"tracks[].track_id", "tracks[].top_pick", "tracks[].items"},
+			NeedsIssues: true,
+		},
+		"robot-triage-by-label": {
+			Flag: "--robot-triage-by-label", Description: "Triage grouped by label for area-focused agents.",
+			KeyFields:   []string{"labels[].label", "labels[].top_pick", "labels[].items"},
+			NeedsIssues: true,
+		},
+		"robot-alerts": {
+			Flag: "--robot-alerts", Description: "Stale issues, blocking cascades, priority mismatches.",
+			KeyFields:   []string{"alerts", "severity", "affected_issues"},
+			Params:      []string{"--severity info|warning|critical", "--alert-type <type>", "--alert-label <label>"},
+			NeedsIssues: true,
+		},
+		"robot-suggest": {
+			Flag: "--robot-suggest", Description: "Smart suggestions: potential duplicates, missing dependencies, label assignments, cycle warnings.",
+			KeyFields:   []string{"suggestions", "type", "confidence"},
+			Params:      []string{"--suggest-type duplicate|dependency|label|cycle", "--suggest-confidence 0.0-1.0", "--suggest-bead <id>"},
+			NeedsIssues: true,
+		},
+		"robot-schema": {
+			Flag: "--robot-schema", Description: "JSON Schema definitions for all robot command outputs.",
+			KeyFields:   []string{"schema_version", "envelope", "commands"},
+			Params:      []string{"--schema-command <cmd>"},
+			NeedsIssues: false,
+		},
+		"robot-docs": {
+			Flag: "--robot-docs <topic>", Description: "Machine-readable JSON documentation. Topics: guide, commands, examples, env, exit-codes, all.",
+			NeedsIssues: false,
+		},
+		"robot-history": {
+			Flag: "--robot-history", Description: "Bead-to-commit correlations from git history.",
+			KeyFields:   []string{"correlations", "confidence", "commit_sha", "bead_id"},
+			Params:      []string{"--bead-history <id>", "--history-since <date>", "--history-limit <n>", "--min-confidence 0.0-1.0"},
+			NeedsIssues: true,
+		},
+		"robot-diff": {
+			Flag: "--robot-diff", Description: "Changes since a historical point (commit, branch, tag, or date).",
+			Params:      []string{"--diff-since <ref>"},
+			NeedsIssues: true,
+		},
+		"robot-search": {
+			Flag: "--robot-search", Description: "Semantic vector search over issue titles and descriptions.",
+			Params:      []string{"--search <query>", "--search-limit <n>", "--search-mode text|hybrid"},
+			NeedsIssues: true,
+		},
+		"robot-label-health": {
+			Flag: "--robot-label-health", Description: "Per-label health metrics: open/closed counts, velocity, staleness.",
+			NeedsIssues: true,
+		},
+		"robot-label-flow": {
+			Flag: "--robot-label-flow", Description: "Cross-label dependency flow analysis.",
+			NeedsIssues: true,
+		},
+		"robot-label-attention": {
+			Flag: "--robot-label-attention", Description: "Attention-ranked labels requiring focus.",
+			Params:      []string{"--attention-limit <n>"},
+			NeedsIssues: true,
+		},
+		"robot-graph": {
+			Flag: "--robot-graph", Description: "Dependency graph export in JSON, DOT, or Mermaid format.",
+			Params:      []string{"--graph-format json|dot|mermaid", "--graph-root <id>", "--graph-depth <n>"},
+			NeedsIssues: true,
+		},
+		"robot-metrics": {
+			Flag: "--robot-metrics", Description: "Performance metrics: timing, cache hit rates, memory usage.",
+			NeedsIssues: true,
+		},
+		"robot-orphans": {
+			Flag: "--robot-orphans", Description: "Orphan commit candidates that should be linked to beads.",
+			Params:      []string{"--orphans-min-score 0-100"},
+			NeedsIssues: true,
+		},
+		"robot-file-beads": {
+			Flag: "--robot-file-beads <path>", Description: "Beads that touched a specific file path.",
+			Params:      []string{"--file-beads-limit <n>"},
+			NeedsIssues: true,
+		},
+		"robot-file-hotspots": {
+			Flag: "--robot-file-hotspots", Description: "Files touched by the most beads.",
+			Params:      []string{"--hotspots-limit <n>"},
+			NeedsIssues: true,
+		},
+		"robot-file-relations": {
+			Flag: "--robot-file-relations <path>", Description: "Files that frequently co-change with a given file.",
+			Params:      []string{"--relations-threshold 0.0-1.0", "--relations-limit <n>"},
+			NeedsIssues: true,
+		},
+		"robot-related": {
+			Flag: "--robot-related <id>", Description: "Beads related to a specific bead ID.",
+			Params:      []string{"--related-min-relevance 0-100", "--related-max-results <n>", "--related-include-closed"},
+			NeedsIssues: true,
+		},
+		"robot-blocker-chain": {
+			Flag: "--robot-blocker-chain <id>", Description: "Full blocker chain analysis for an issue.",
+			NeedsIssues: true,
+		},
+		"robot-impact-network": {
+			Flag: "--robot-impact-network [<id>|all]", Description: "Impact network graph (full or subnetwork for a bead).",
+			Params:      []string{"--network-depth 1-3"},
+			NeedsIssues: true,
+		},
+		"robot-causality": {
+			Flag: "--robot-causality <id>", Description: "Causal chain analysis for a bead.",
+			NeedsIssues: true,
+		},
+		"robot-sprint-list": {
+			Flag: "--robot-sprint-list", Description: "List all sprints as JSON.",
+			NeedsIssues: true,
+		},
+		"robot-sprint-show": {
+			Flag: "--robot-sprint-show <id>", Description: "Show details for a specific sprint.",
+			NeedsIssues: true,
+		},
+		"robot-forecast": {
+			Flag: "--robot-forecast <id|all>", Description: "ETA predictions for bead completion.",
+			Params:      []string{"--forecast-label <label>", "--forecast-sprint <id>", "--forecast-agents <n>"},
+			NeedsIssues: true,
+		},
+		"robot-capacity": {
+			Flag: "--robot-capacity", Description: "Capacity simulation and completion projections.",
+			Params:      []string{"--agents <n>", "--capacity-label <label>"},
+			NeedsIssues: true,
+		},
+		"robot-burndown": {
+			Flag: "--robot-burndown <sprint|current>", Description: "Sprint burndown data.",
+			NeedsIssues: true,
+		},
+		"robot-drift": {
+			Flag: "--robot-drift", Description: "Drift detection from saved baseline.",
+			NeedsIssues: true,
+		},
+	}
+
+	examples := []map[string]string{
+		{"description": "Get top 3 picks for immediate work", "command": "bv --robot-triage | jq '.triage.quick_ref.top_picks[:3]'"},
+		{"description": "Claim the top recommendation", "command": "bv --robot-next | jq -r '.claim_command' | sh"},
+		{"description": "Find high-impact blockers to clear", "command": "bv --robot-triage | jq '.triage.blockers_to_clear | map(.id)'"},
+		{"description": "Get bug-only recommendations", "command": "bv --robot-triage | jq '.triage.recommendations[] | select(.type == \"bug\")'"},
+		{"description": "Multi-agent: top pick per parallel track", "command": "bv --robot-triage-by-track | jq '.triage.recommendations_by_track[].top_pick'"},
+		{"description": "Find beads related to a specific file", "command": "bv --robot-file-beads src/main.rs"},
+		{"description": "Search for issues by keyword", "command": "bv --search 'authentication' --robot-search"},
+		{"description": "Get TOON output (saves tokens)", "command": "bv --robot-triage --format toon"},
+		{"description": "Use env for default format", "command": "BV_OUTPUT_FORMAT=toon bv --robot-triage"},
+		{"description": "Show token savings estimate", "command": "bv --robot-triage --format toon --stats"},
+	}
+
+	envVars := map[string]string{
+		"BV_OUTPUT_FORMAT":    "Default output format: json or toon (overridden by --format)",
+		"TOON_DEFAULT_FORMAT": "Fallback format if BV_OUTPUT_FORMAT not set",
+		"TOON_STATS":          "Set to 1 to show JSON vs TOON token estimates on stderr",
+		"TOON_KEY_FOLDING":    "TOON key folding mode",
+		"TOON_INDENT":         "TOON indentation level (0-16)",
+		"BV_PRETTY_JSON":      "Set to 1 for indented JSON output",
+		"BV_ROBOT":            "Set to 1 to force robot mode (clean stdout)",
+		"BV_SEARCH_MODE":      "Search mode: text or hybrid",
+		"BV_SEARCH_PRESET":    "Hybrid search preset name",
+	}
+
+	exitCodes := map[string]string{
+		"0": "Success",
+		"1": "Error (general failure, drift critical)",
+		"2": "Invalid arguments or drift warning",
+	}
+
+	switch topic {
+	case "guide":
+		result["guide"] = guide
+	case "commands":
+		result["commands"] = commands
+	case "examples":
+		result["examples"] = examples
+	case "env":
+		result["environment_variables"] = envVars
+	case "exit-codes":
+		result["exit_codes"] = exitCodes
+	case "all":
+		result["guide"] = guide
+		result["commands"] = commands
+		result["examples"] = examples
+		result["environment_variables"] = envVars
+		result["exit_codes"] = exitCodes
+	default:
+		result["error"] = "Unknown topic: " + topic
+		result["available_topics"] = []string{"guide", "commands", "examples", "env", "exit-codes", "all"}
+	}
+
+	return result
+}
+
+// RobotSchemas holds JSON Schema definitions for all robot commands
+type RobotSchemas struct {
+	SchemaVersion string                            `json:"schema_version"`
+	GeneratedAt   string                            `json:"generated_at"`
+	Envelope      map[string]interface{}            `json:"envelope"`
+	Commands      map[string]map[string]interface{} `json:"commands"`
+}
+
+// generateRobotSchemas creates JSON Schema definitions for robot command outputs
+func generateRobotSchemas() RobotSchemas {
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Common envelope schema (present in all robot outputs)
+	envelope := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"generated_at": map[string]interface{}{
+				"type":        "string",
+				"format":      "date-time",
+				"description": "ISO 8601 timestamp when output was generated",
+			},
+			"data_hash": map[string]interface{}{
+				"type":        "string",
+				"description": "Fingerprint of source beads.jsonl for cache validation",
+			},
+			"output_format": map[string]interface{}{
+				"type":        "string",
+				"enum":        []string{"json", "toon"},
+				"description": "Output format used (json or toon)",
+			},
+			"version": map[string]interface{}{
+				"type":        "string",
+				"description": "bv version that generated this output",
+			},
+		},
+		"required": []string{"generated_at", "data_hash"},
+	}
+
+	commands := map[string]map[string]interface{}{
+		"robot-triage": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Triage Output",
+			"description": "Unified triage recommendations with quick picks, blockers, and project health",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"triage": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"meta": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"version":      map[string]interface{}{"type": "string"},
+								"generated_at": map[string]interface{}{"type": "string"},
+								"phase2_ready": map[string]interface{}{"type": "boolean"},
+								"issue_count":  map[string]interface{}{"type": "integer"},
+							},
+						},
+						"quick_ref": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"open_count":        map[string]interface{}{"type": "integer"},
+								"actionable_count":  map[string]interface{}{"type": "integer"},
+								"blocked_count":     map[string]interface{}{"type": "integer"},
+								"in_progress_count": map[string]interface{}{"type": "integer"},
+								"top_picks": map[string]interface{}{
+									"type":  "array",
+									"items": map[string]interface{}{"$ref": "#/$defs/recommendation"},
+								},
+							},
+						},
+						"recommendations": map[string]interface{}{
+							"type":  "array",
+							"items": map[string]interface{}{"$ref": "#/$defs/recommendation"},
+						},
+						"quick_wins":        map[string]interface{}{"type": "array"},
+						"blockers_to_clear": map[string]interface{}{"type": "array"},
+						"project_health":    map[string]interface{}{"type": "object"},
+						"commands":          map[string]interface{}{"type": "object"},
+					},
+				},
+				"usage_hints": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			},
+			"$defs": map[string]interface{}{
+				"recommendation": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"id":       map[string]interface{}{"type": "string"},
+						"title":    map[string]interface{}{"type": "string"},
+						"type":     map[string]interface{}{"type": "string"},
+						"status":   map[string]interface{}{"type": "string"},
+						"priority": map[string]interface{}{"type": "integer"},
+						"labels":   map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+						"score":    map[string]interface{}{"type": "number"},
+						"reasons":  map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+						"unblocks": map[string]interface{}{"type": "integer"},
+					},
+					"required": []string{"id", "title", "score"},
+				},
+			},
+		},
+		"robot-next": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Next Output",
+			"description": "Single top pick recommendation with claim command",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at":  map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":     map[string]interface{}{"type": "string"},
+				"id":            map[string]interface{}{"type": "string"},
+				"title":         map[string]interface{}{"type": "string"},
+				"score":         map[string]interface{}{"type": "number"},
+				"reasons":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+				"unblocks":      map[string]interface{}{"type": "integer"},
+				"claim_command": map[string]interface{}{"type": "string"},
+				"show_command":  map[string]interface{}{"type": "string"},
+			},
+			"required": []string{"generated_at", "data_hash", "id", "title", "score"},
+		},
+		"robot-plan": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Plan Output",
+			"description": "Dependency-respecting execution plan with parallel tracks",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"plan": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"phases": map[string]interface{}{
+							"type": "array",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"phase":  map[string]interface{}{"type": "integer"},
+									"issues": map[string]interface{}{"type": "array"},
+								},
+							},
+						},
+						"summary": map[string]interface{}{"type": "object"},
+					},
+				},
+				"status":      map[string]interface{}{"type": "object"},
+				"usage_hints": map[string]interface{}{"type": "array"},
+			},
+		},
+		"robot-insights": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Insights Output",
+			"description": "Full graph analysis metrics including PageRank, betweenness, HITS, cycles",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at":      map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":         map[string]interface{}{"type": "string"},
+				"Stats":             map[string]interface{}{"type": "object"},
+				"Cycles":            map[string]interface{}{"type": "array"},
+				"Keystones":         map[string]interface{}{"type": "array"},
+				"Bottlenecks":       map[string]interface{}{"type": "array"},
+				"Influencers":       map[string]interface{}{"type": "array"},
+				"Hubs":              map[string]interface{}{"type": "array"},
+				"Authorities":       map[string]interface{}{"type": "array"},
+				"Orphans":           map[string]interface{}{"type": "array"},
+				"Cores":             map[string]interface{}{"type": "object"},
+				"Articulation":      map[string]interface{}{"type": "array"},
+				"Slack":             map[string]interface{}{"type": "object"},
+				"Velocity":          map[string]interface{}{"type": "object"},
+				"status":            map[string]interface{}{"type": "object"},
+				"advanced_insights": map[string]interface{}{"type": "object"},
+				"usage_hints":       map[string]interface{}{"type": "array"},
+			},
+		},
+		"robot-priority": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Priority Output",
+			"description": "Priority misalignment detection with recommendations",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at":    map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":       map[string]interface{}{"type": "string"},
+				"recommendations": map[string]interface{}{"type": "array"},
+				"status":          map[string]interface{}{"type": "object"},
+				"usage_hints":     map[string]interface{}{"type": "array"},
+			},
+		},
+		"robot-graph": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Graph Output",
+			"description": "Dependency graph in JSON/DOT/Mermaid format",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"format":       map[string]interface{}{"type": "string", "enum": []string{"json", "dot", "mermaid"}},
+				"nodes":        map[string]interface{}{"type": "array"},
+				"edges":        map[string]interface{}{"type": "array"},
+				"stats":        map[string]interface{}{"type": "object"},
+			},
+		},
+		"robot-diff": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Diff Output",
+			"description": "Changes since a historical point (commit, branch, date)",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"since":        map[string]interface{}{"type": "string"},
+				"since_commit": map[string]interface{}{"type": "string"},
+				"new":          map[string]interface{}{"type": "array"},
+				"closed":       map[string]interface{}{"type": "array"},
+				"modified":     map[string]interface{}{"type": "array"},
+				"cycles":       map[string]interface{}{"type": "object"},
+			},
+		},
+		"robot-alerts": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Alerts Output",
+			"description": "Stale issues, blocking cascades, priority mismatches",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"alerts":       map[string]interface{}{"type": "array"},
+				"summary":      map[string]interface{}{"type": "object"},
+			},
+		},
+		"robot-suggest": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Suggest Output",
+			"description": "Smart suggestions for duplicates, dependencies, labels, cycle breaks",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"suggestions":  map[string]interface{}{"type": "array"},
+				"counts":       map[string]interface{}{"type": "object"},
+			},
+		},
+		"robot-burndown": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Burndown Output",
+			"description": "Sprint burndown data with scope changes and at-risk items",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at":  map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":     map[string]interface{}{"type": "string"},
+				"sprint_id":     map[string]interface{}{"type": "string"},
+				"burndown":      map[string]interface{}{"type": "array"},
+				"scope_changes": map[string]interface{}{"type": "array"},
+				"at_risk":       map[string]interface{}{"type": "array"},
+			},
+		},
+		"robot-forecast": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Forecast Output",
+			"description": "ETA predictions with dependency-aware scheduling",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"forecasts":    map[string]interface{}{"type": "array"},
+				"methodology":  map[string]interface{}{"type": "object"},
+			},
+		},
+	}
+
+	return RobotSchemas{
+		SchemaVersion: "1.0.0",
+		GeneratedAt:   now,
+		Envelope:      envelope,
+		Commands:      commands,
+	}
 }

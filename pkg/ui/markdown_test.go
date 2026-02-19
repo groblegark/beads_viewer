@@ -206,11 +206,10 @@ func TestBuildStyleFromTheme(t *testing.T) {
 	if *darkConfig.Document.Color != "#f8f8f2" {
 		t.Errorf("expected dark mode doc color #f8f8f2, got %s", *darkConfig.Document.Color)
 	}
-	if darkConfig.Document.BackgroundColor == nil {
-		t.Error("expected dark mode BackgroundColor to be set")
-	}
-	if *darkConfig.Document.BackgroundColor != "#282a36" {
-		t.Errorf("expected dark mode bg color #282a36, got %s", *darkConfig.Document.BackgroundColor)
+	// Dark mode background should be nil (transparent) to avoid Solarized/16-color
+	// terminal issues where hex colors get downconverted to wrong ANSI slots (#101)
+	if darkConfig.Document.BackgroundColor != nil {
+		t.Errorf("expected dark mode BackgroundColor to be nil (transparent), got %v", *darkConfig.Document.BackgroundColor)
 	}
 
 	// Test light mode

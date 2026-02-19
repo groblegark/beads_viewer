@@ -250,5 +250,3 @@ func (m LabelDashboardModel) renderBlockedCell(lh analysis.LabelHealth) string {
 	}
 	return m.theme.Base.Foreground(m.theme.Blocked).Bold(true).Render(fmt.Sprintf("%d", lh.Blocked))
 }
-
-

@@ -458,6 +458,31 @@ async function cacheToOPFS(data, cacheKey) {
 }
 
 /**
+ * Remove stale OPFS cache entries (old hashes and the legacy "default" key).
+ * Runs in the background after a successful cache hit to free storage.
+ */
+async function cleanStaleOPFS(currentCacheKey) {
+  if (!('storage' in navigator) || !navigator.storage.getDirectory) return;
+  try {
+    const root = await navigator.storage.getDirectory();
+    const currentFile = `beads-${currentCacheKey}.sqlite3`;
+    // Collect stale names first to avoid mutating directory during iteration
+    const stale = [];
+    for await (const [name] of root.entries()) {
+      if (name.startsWith('beads-') && name.endsWith('.sqlite3') && name !== currentFile) {
+        stale.push(name);
+      }
+    }
+    for (const name of stale) {
+      await root.removeEntry(name);
+      console.log(`[OPFS] Removed stale cache: ${name}`);
+    }
+  } catch (err) {
+    // Non-critical; ignore cleanup failures
+  }
+}
+
+/**
  * Fetch JSON file
  */
 async function fetchJSON(url) {
@@ -472,9 +497,11 @@ async function fetchJSON(url) {
 async function loadChunks(config) {
   const chunks = [];
   const totalChunks = config.chunk_count;
+  // Use same cache-buster for all chunks to ensure consistency
+  const cacheBuster = `?_t=${Date.now()}`;
 
   for (let i = 0; i < totalChunks; i++) {
-    const chunkPath = `./chunks/${String(i).padStart(5, '0')}.bin`;
+    const chunkPath = `./chunks/${String(i).padStart(5, '0')}.bin${cacheBuster}`;
     const response = await fetch(chunkPath);
     if (!response.ok) throw new Error(`Failed to load chunk ${i}`);
     const buffer = await response.arrayBuffer();
@@ -503,9 +530,13 @@ async function loadDatabase(updateStatus) {
   updateStatus?.('Checking cache...');
 
   // Load config to get cache key
+  // Use cache-busting query param to ensure we always get the latest config
+  // This prevents CDN caching issues on GitHub Pages where stale config
+  // could cause OPFS to serve an outdated database
   let config = null;
   try {
-    config = await fetchJSON('./beads.sqlite3.config.json');
+    const cacheBuster = `?_t=${Date.now()}`;
+    config = await fetchJSON('./beads.sqlite3.config.json' + cacheBuster);
     DB_STATE.cacheKey = config.hash || null;
   } catch {
     // Config file may not exist for small DBs
@@ -518,6 +549,8 @@ async function loadDatabase(updateStatus) {
       DB_STATE.db = new SQL.Database(cached);
       DB_STATE.source = 'cache';
       DIAGNOSTICS.dbSource = 'cache';
+      // Clean up stale cache entries in the background
+      cleanStaleOPFS(DB_STATE.cacheKey).catch(() => {});
       return DB_STATE.db;
     }
   }
@@ -534,7 +567,9 @@ async function loadDatabase(updateStatus) {
       DIAGNOSTICS.dbSource = 'chunks';
     } else {
       // Load single file - try multiple paths
-      const paths = ['./beads.sqlite3', './data/beads.sqlite3'];
+      // Add cache-busting to avoid CDN serving stale database
+      const cacheBuster = `?_t=${Date.now()}`;
+      const paths = ['./beads.sqlite3' + cacheBuster, './data/beads.sqlite3' + cacheBuster];
       let loaded = false;
 
       for (const path of paths) {
@@ -586,10 +621,11 @@ async function loadDatabase(updateStatus) {
     throw err;
   }
 
-  // Cache for next time
+  // Cache for next time and clean up stale entries (e.g., legacy "default" key)
   if (DB_STATE.cacheKey) {
     updateStatus?.('Caching for offline...');
     await cacheToOPFS(DB_STATE.db.export(), DB_STATE.cacheKey);
+    cleanStaleOPFS(DB_STATE.cacheKey).catch(() => {});
   }
 
   return DB_STATE.db;
@@ -2538,8 +2574,9 @@ function beadsApp() {
         }
 
         // Load full triage data for insights view
+        // Use cache-busting to avoid stale data from CDN
         try {
-          const triageResp = await fetch('./data/triage.json');
+          const triageResp = await fetch(`./data/triage.json?_t=${Date.now()}`);
           if (triageResp.ok) {
             this.triageData = await triageResp.json();
             console.log('[Viewer] Triage data loaded:', this.triageData?.meta?.issue_count, 'issues');
@@ -2745,8 +2782,9 @@ function beadsApp() {
         this.forceGraphModule.loadData(issues, dependencies, precomputedLayout);
 
         // Try to load history data for time-travel feature (bv-z38b)
+        // Use cache-busting to avoid stale data from CDN
         try {
-          const historyResp = await fetch('./data/history.json');
+          const historyResp = await fetch(`./data/history.json?_t=${Date.now()}`);
           if (historyResp.ok) {
             const historyData = await historyResp.json();
             if (this.forceGraphModule.initTimeTravel) {
