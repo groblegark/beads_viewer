@@ -1357,16 +1357,14 @@ func main() {
 		workspaceRoot := filepath.Dir(filepath.Dir(*workspaceConfig))
 		_ = loader.EnsureBVInGitignore(workspaceRoot)
 	} else if *beadsURL != "" {
-		// Load from Gas Town daemon via ConnectRPC
-		ctx, cancel := context.WithTimeout(context.Background(), loader.DefaultHTTPTimeout)
+		// Load from Gas Town daemon via datasource layer (enables HTTP discovery + polling)
 		var err error
-		issues, err = loader.LoadIssuesFromURL(ctx, *beadsURL, *beadsAPIKey, loader.ParseOptions{})
-		cancel()
+		issues, err = datasource.LoadIssuesFromHTTP(*beadsURL, *beadsAPIKey)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading beads from %s: %v\n", *beadsURL, err)
 			os.Exit(1)
 		}
-		beadsPath = "" // no file-based live reload
+		beadsPath = "" // no file-based live reload (HTTP uses polling)
 	} else {
 		// Load from single repo (original behavior)
 		var err error

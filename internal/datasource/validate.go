@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	json "github.com/goccy/go-json"
 	_ "modernc.org/sqlite"
@@ -63,6 +64,8 @@ func ValidateSourceWithOptions(source *DataSource, opts ValidationOptions) error
 		err = validateSQLite(source, opts)
 	case SourceTypeJSONLLocal, SourceTypeJSONLWorktree:
 		err = validateJSONL(source, opts)
+	case SourceTypeHTTP:
+		err = validateHTTP(source, opts)
 	default:
 		err = fmt.Errorf("unknown source type: %s", source.Type)
 	}
@@ -282,14 +285,24 @@ func validateJSONL(source *DataSource, opts ValidationOptions) error {
 	return nil
 }
 
-// IsSourceAccessible quickly checks if a source file is accessible
+// IsSourceAccessible quickly checks if a source file/endpoint is accessible
 func IsSourceAccessible(source *DataSource) bool {
+	if source.Type == SourceTypeHTTP {
+		reader := NewHTTPReader(source.Path, "")
+		_, err := reader.Ping()
+		return err == nil
+	}
 	_, err := os.Stat(source.Path)
 	return err == nil
 }
 
-// RefreshSourceInfo updates the ModTime and Size of a source from disk
+// RefreshSourceInfo updates the ModTime and Size of a source from disk (or daemon)
 func RefreshSourceInfo(source *DataSource) error {
+	if source.Type == SourceTypeHTTP {
+		// HTTP sources are always "now"
+		source.ModTime = time.Now()
+		return nil
+	}
 	info, err := os.Stat(source.Path)
 	if err != nil {
 		return fmt.Errorf("cannot access file: %w", err)

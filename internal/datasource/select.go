@@ -173,6 +173,8 @@ func buildSelectionReason(selected DataSource, candidates []DataSource, opts Sel
 	switch selected.Type {
 	case SourceTypeSQLite:
 		reasons = append(reasons, "SQLite is most authoritative")
+	case SourceTypeHTTP:
+		reasons = append(reasons, "live daemon data")
 	case SourceTypeJSONLWorktree:
 		reasons = append(reasons, "synced worktree data")
 	case SourceTypeJSONLLocal:

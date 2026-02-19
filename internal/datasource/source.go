@@ -23,11 +23,14 @@ const (
 	SourceTypeJSONLWorktree SourceType = "jsonl_worktree"
 	// SourceTypeJSONLLocal is a local JSONL file
 	SourceTypeJSONLLocal SourceType = "jsonl_local"
+	// SourceTypeHTTP is a remote daemon accessed via ConnectRPC over HTTP
+	SourceTypeHTTP SourceType = "http"
 )
 
 // Priority values for source types (higher = more authoritative)
 const (
 	PrioritySQLite        = 100
+	PriorityHTTP          = 90
 	PriorityJSONLWorktree = 80
 	PriorityJSONLLocal    = 50
 )
@@ -76,6 +79,13 @@ type DiscoveryOptions struct {
 	Verbose bool
 	// Logger receives log messages when Verbose is true
 	Logger func(msg string)
+	// HTTPEndpoint is an explicit daemon URL to include as an HTTP source.
+	// When set, an HTTP source is added to discovery results.
+	// Also checked from BEADS_URL and BD_DAEMON_HTTP_URL env vars.
+	HTTPEndpoint string
+	// HTTPAPIKey is the API key for authenticating to the HTTP daemon.
+	// Falls back to BD_API_KEY / BD_DAEMON_TOKEN env vars.
+	HTTPAPIKey string
 }
 
 // DiscoverSources finds all potential data sources in the beads directory
@@ -130,6 +140,10 @@ func DiscoverSources(opts DiscoveryOptions) ([]DataSource, error) {
 		opts.Logger(fmt.Sprintf("Worktree discovery warning: %v", err))
 	}
 	sources = append(sources, worktreeSources...)
+
+	// Discover HTTP daemon sources
+	httpSources := discoverHTTPSources(opts)
+	sources = append(sources, httpSources...)
 
 	// Validate sources if requested
 	if opts.ValidateAfterDiscovery {

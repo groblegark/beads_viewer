@@ -46,6 +46,31 @@ func LoadIssuesFromDir(beadsDir string) ([]model.Issue, error) {
 	return loader.LoadIssuesFromFile(jsonlPath)
 }
 
+// LoadIssuesFromHTTP loads issues via the datasource layer using an HTTP daemon endpoint.
+// This integrates --beads-url into the datasource discovery/selection framework,
+// enabling future live-reload via polling.
+func LoadIssuesFromHTTP(httpURL, apiKey string) ([]model.Issue, error) {
+	sources, err := DiscoverSources(DiscoveryOptions{
+		HTTPEndpoint:           httpURL,
+		HTTPAPIKey:             apiKey,
+		ValidateAfterDiscovery: true,
+		IncludeInvalid:         false,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(sources) == 0 {
+		return nil, fmt.Errorf("HTTP daemon not reachable at %s", httpURL)
+	}
+
+	best, err := SelectBestSource(sources)
+	if err != nil {
+		return nil, err
+	}
+
+	return LoadFromSource(best)
+}
+
 // loadSmart discovers sources, validates, selects the best, and loads from it.
 func loadSmart(beadsDir, repoPath string) ([]model.Issue, error) {
 	sources, err := DiscoverSources(DiscoveryOptions{
@@ -83,6 +108,10 @@ func LoadFromSource(source DataSource) ([]model.Issue, error) {
 
 	case SourceTypeJSONLLocal, SourceTypeJSONLWorktree:
 		return loader.LoadIssuesFromFile(source.Path)
+
+	case SourceTypeHTTP:
+		reader := NewHTTPReader(source.Path, "")
+		return reader.LoadIssues()
 
 	default:
 		return nil, fmt.Errorf("unknown source type: %s", source.Type)
