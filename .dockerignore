@@ -1,0 +1,12 @@
+.git
+.beads
+.bv
+bv
+bv_test
+bv_profile
+vendor
+testdata
+benchmarks
+screenshots
+coverage_report.txt
+*.md

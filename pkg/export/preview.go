@@ -184,14 +184,19 @@ func noCacheMiddleware(next http.Handler) http.Handler {
 
 // FindAvailablePort finds an available port in the given range.
 func FindAvailablePort(start, end int) (int, error) {
+	return FindAvailablePortOnHost("127.0.0.1", start, end)
+}
+
+// FindAvailablePortOnHost finds an available port on the given host in the given range.
+func FindAvailablePortOnHost(host string, start, end int) (int, error) {
 	for port := start; port <= end; port++ {
-		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 		if err == nil {
 			listener.Close()
 			return port, nil
 		}
 	}
-	return 0, fmt.Errorf("no available port in range %d-%d", start, end)
+	return 0, fmt.Errorf("no available port in range %d-%d on %s", start, end, host)
 }
 
 // DefaultPreviewPort is the default port for the preview server.
@@ -219,6 +224,9 @@ type PreviewConfig struct {
 
 	// Port is the port to serve on (0 for auto-select)
 	Port int
+
+	// Host is the address to bind to (default: "127.0.0.1", use "0.0.0.0" for containers)
+	Host string
 
 	// OpenBrowser determines whether to auto-open a browser
 	OpenBrowser bool
@@ -256,11 +264,17 @@ func StartPreviewWithConfig(config PreviewConfig) error {
 		return fmt.Errorf("no index.html found in bundle: %s", config.BundlePath)
 	}
 
+	// Resolve host binding
+	host := config.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+
 	// Auto-select port if needed
 	port := config.Port
 	if port == 0 {
 		var err error
-		port, err = FindAvailablePort(PreviewPortRangeStart, PreviewPortRangeEnd)
+		port, err = FindAvailablePortOnHost(host, PreviewPortRangeStart, PreviewPortRangeEnd)
 		if err != nil {
 			return fmt.Errorf("could not find available port: %w", err)
 		}
@@ -306,7 +320,7 @@ func StartPreviewWithConfig(config PreviewConfig) error {
 	server.liveReloadHub = liveReloadHub
 
 	server.server = &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", port),
+		Addr:    fmt.Sprintf("%s:%d", host, port),
 		Handler: mux,
 	}
 
@@ -314,7 +328,7 @@ func StartPreviewWithConfig(config PreviewConfig) error {
 	if config.OpenBrowser {
 		go func() {
 			time.Sleep(500 * time.Millisecond)
-			url := server.URL()
+			url := fmt.Sprintf("http://127.0.0.1:%d", port)
 			if err := OpenInBrowser(url); err != nil {
 				if !config.Quiet {
 					fmt.Printf("Could not open browser: %v\n", err)
@@ -326,7 +340,7 @@ func StartPreviewWithConfig(config PreviewConfig) error {
 
 	// Print status message
 	if !config.Quiet {
-		fmt.Printf("\nPreview server running at http://127.0.0.1:%d\n", port)
+		fmt.Printf("\nPreview server running at http://%s:%d\n", host, port)
 		fmt.Printf("Serving: %s\n", config.BundlePath)
 		if liveReloadHub != nil {
 			fmt.Println("Live-reload: enabled (browser will refresh on file changes)")

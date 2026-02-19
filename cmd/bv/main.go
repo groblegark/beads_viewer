@@ -197,6 +197,7 @@ func main() {
 	pagesIncludeClosed := flag.Bool("pages-include-closed", true, "Include closed issues in export (default: true)")
 	pagesIncludeHistory := flag.Bool("pages-include-history", true, "Include git history for time-travel (default: true)")
 	previewPages := flag.String("preview-pages", "", "Preview existing static site bundle")
+	previewHost := flag.String("preview-host", "", "Host to bind preview server to (default: 127.0.0.1, use 0.0.0.0 for containers)")
 	previewNoLiveReload := flag.Bool("no-live-reload", false, "Disable live-reload in preview mode")
 	watchExport := flag.Bool("watch-export", false, "Watch for beads changes and auto-regenerate export (use with --export-pages)")
 	pagesWizard := flag.Bool("pages", false, "Launch interactive Pages deployment wizard")
@@ -1639,7 +1640,7 @@ func main() {
 
 	// Handle --preview-pages (before export since it doesn't need analysis)
 	if *previewPages != "" {
-		if err := runPreviewServer(*previewPages, !*previewNoLiveReload); err != nil {
+		if err := runPreviewServer(*previewPages, *previewHost, !*previewNoLiveReload); err != nil {
 			fmt.Fprintf(os.Stderr, "Error starting preview server: %v\n", err)
 			os.Exit(1)
 		}
@@ -6255,9 +6256,10 @@ func escapeMarkdownTableCell(s string) string {
 }
 
 // runPreviewServer starts a local HTTP server to preview the static site.
-func runPreviewServer(dir string, liveReload bool) error {
+func runPreviewServer(dir, host string, liveReload bool) error {
 	cfg := export.DefaultPreviewConfig()
 	cfg.BundlePath = dir
+	cfg.Host = host
 	cfg.LiveReload = liveReload
 	return export.StartPreviewWithConfig(cfg)
 }
