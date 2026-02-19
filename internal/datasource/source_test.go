@@ -142,6 +142,10 @@ func TestDiscoverSources_Multiple(t *testing.T) {
 
 // TestDiscoverSources_Empty tests discovery with no sources
 func TestDiscoverSources_Empty(t *testing.T) {
+	// Clear HTTP-related env vars so HTTP discovery doesn't find a source
+	t.Setenv("BV_BEADS_URL", "")
+	t.Setenv("BD_DAEMON_HOST", "")
+
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {

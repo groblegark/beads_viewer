@@ -62,10 +62,10 @@ func ValidateSourceWithOptions(source *DataSource, opts ValidationOptions) error
 	switch source.Type {
 	case SourceTypeSQLite:
 		err = validateSQLite(source, opts)
-	case SourceTypeJSONLLocal, SourceTypeJSONLWorktree:
-		err = validateJSONL(source, opts)
 	case SourceTypeHTTP:
 		err = validateHTTP(source, opts)
+	case SourceTypeJSONLLocal, SourceTypeJSONLWorktree:
+		err = validateJSONL(source, opts)
 	default:
 		err = fmt.Errorf("unknown source type: %s", source.Type)
 	}
@@ -165,6 +165,8 @@ func validateSQLite(source *DataSource, opts ValidationOptions) error {
 
 	return nil
 }
+
+// Note: validateHTTP is defined in http.go
 
 // validateJSONL validates a JSONL file
 func validateJSONL(source *DataSource, opts ValidationOptions) error {

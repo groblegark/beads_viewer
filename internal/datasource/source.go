@@ -19,12 +19,12 @@ type SourceType string
 const (
 	// SourceTypeSQLite is a SQLite database (beads.db)
 	SourceTypeSQLite SourceType = "sqlite"
+	// SourceTypeHTTP is a remote daemon accessed via ConnectRPC over HTTP
+	SourceTypeHTTP SourceType = "http"
 	// SourceTypeJSONLWorktree is a JSONL file from a git worktree
 	SourceTypeJSONLWorktree SourceType = "jsonl_worktree"
 	// SourceTypeJSONLLocal is a local JSONL file
 	SourceTypeJSONLLocal SourceType = "jsonl_local"
-	// SourceTypeHTTP is a remote daemon accessed via ConnectRPC over HTTP
-	SourceTypeHTTP SourceType = "http"
 )
 
 // Priority values for source types (higher = more authoritative)
@@ -39,7 +39,7 @@ const (
 type DataSource struct {
 	// Type identifies the source type
 	Type SourceType `json:"type"`
-	// Path is the absolute path to the source file
+	// Path is the absolute path to the source file (or URL for HTTP sources)
 	Path string `json:"path"`
 	// Priority determines preference when timestamps are equal (higher = preferred)
 	Priority int `json:"priority"`
@@ -53,6 +53,10 @@ type DataSource struct {
 	IssueCount int `json:"issue_count"`
 	// Size is the file size in bytes
 	Size int64 `json:"size"`
+
+	// apiKey holds the HTTP API key for daemon authentication (HTTP sources only).
+	// Not exported or serialized — set during discovery from DiscoveryOptions.HTTPAPIKey.
+	apiKey string
 }
 
 // String returns a human-readable description of the source
@@ -71,6 +75,13 @@ type DiscoveryOptions struct {
 	BeadsDir string
 	// RepoPath is the repository root path (optional, uses cwd if empty)
 	RepoPath string
+	// HTTPEndpoint is an explicit daemon URL to include as an HTTP source.
+	// When set, an HTTP source is added to discovery results.
+	// Also checked from BV_BEADS_URL, BD_DAEMON_HOST env vars.
+	HTTPEndpoint string
+	// HTTPAPIKey is the API key for authenticating to the HTTP daemon.
+	// Falls back to BD_API_KEY / BD_DAEMON_TOKEN env vars.
+	HTTPAPIKey string
 	// ValidateAfterDiscovery runs validation on each discovered source
 	ValidateAfterDiscovery bool
 	// IncludeInvalid includes sources that failed validation in results
@@ -79,13 +90,6 @@ type DiscoveryOptions struct {
 	Verbose bool
 	// Logger receives log messages when Verbose is true
 	Logger func(msg string)
-	// HTTPEndpoint is an explicit daemon URL to include as an HTTP source.
-	// When set, an HTTP source is added to discovery results.
-	// Also checked from BEADS_URL and BD_DAEMON_HTTP_URL env vars.
-	HTTPEndpoint string
-	// HTTPAPIKey is the API key for authenticating to the HTTP daemon.
-	// Falls back to BD_API_KEY / BD_DAEMON_TOKEN env vars.
-	HTTPAPIKey string
 }
 
 // DiscoverSources finds all potential data sources in the beads directory
@@ -322,3 +326,5 @@ func discoverWorktreeSources(repoPath string, opts DiscoveryOptions) ([]DataSour
 
 	return sources, nil
 }
+
+// Note: discoverHTTPSources is defined in http.go

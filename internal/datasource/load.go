@@ -7,6 +7,14 @@ import (
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 )
 
+// LoadOptions configures the loading pipeline.
+type LoadOptions struct {
+	// HTTPEndpoint is the daemon URL for HTTP source loading
+	HTTPEndpoint string
+	// HTTPAPIKey is the API key for daemon authentication
+	HTTPAPIKey string
+}
+
 // LoadIssues performs smart multi-source detection and loading.
 // It discovers all available sources (SQLite, JSONL), validates them, selects
 // the freshest valid source, and loads issues from it. SQLite is preferred over
@@ -16,14 +24,25 @@ import (
 // Falls back to legacy JSONL-only loading via loader.LoadIssues if smart
 // detection finds no valid sources.
 func LoadIssues(repoPath string) ([]model.Issue, error) {
+	return LoadIssuesWithOptions(repoPath, LoadOptions{})
+}
+
+// LoadIssuesWithOptions performs smart multi-source detection and loading with
+// additional options for HTTP sources.
+func LoadIssuesWithOptions(repoPath string, opts LoadOptions) ([]model.Issue, error) {
 	beadsDir, err := loader.GetBeadsDir(repoPath)
-	if err != nil {
+	if err != nil && opts.HTTPEndpoint == "" {
 		return nil, err
 	}
 
-	issues, smartErr := loadSmart(beadsDir, repoPath)
+	issues, smartErr := loadSmartWithHTTP(beadsDir, repoPath, opts)
 	if smartErr == nil {
 		return issues, nil
+	}
+
+	if opts.HTTPEndpoint != "" {
+		// If HTTP was requested and smart loading failed, return the error
+		return nil, smartErr
 	}
 
 	// Fall back to legacy JSONL-only loading
@@ -73,9 +92,16 @@ func LoadIssuesFromHTTP(httpURL, apiKey string) ([]model.Issue, error) {
 
 // loadSmart discovers sources, validates, selects the best, and loads from it.
 func loadSmart(beadsDir, repoPath string) ([]model.Issue, error) {
+	return loadSmartWithHTTP(beadsDir, repoPath, LoadOptions{})
+}
+
+// loadSmartWithHTTP discovers sources including HTTP, validates, selects the best, and loads from it.
+func loadSmartWithHTTP(beadsDir, repoPath string, opts LoadOptions) ([]model.Issue, error) {
 	sources, err := DiscoverSources(DiscoveryOptions{
 		BeadsDir:               beadsDir,
 		RepoPath:               repoPath,
+		HTTPEndpoint:           opts.HTTPEndpoint,
+		HTTPAPIKey:             opts.HTTPAPIKey,
 		ValidateAfterDiscovery: true,
 		IncludeInvalid:         false,
 	})
@@ -106,12 +132,12 @@ func LoadFromSource(source DataSource) ([]model.Issue, error) {
 		defer reader.Close()
 		return reader.LoadIssues()
 
+	case SourceTypeHTTP:
+		reader := NewHTTPReader(source.Path, source.apiKey)
+		return reader.LoadIssues()
+
 	case SourceTypeJSONLLocal, SourceTypeJSONLWorktree:
 		return loader.LoadIssuesFromFile(source.Path)
-
-	case SourceTypeHTTP:
-		reader := NewHTTPReader(source.Path, "")
-		return reader.LoadIssues()
 
 	default:
 		return nil, fmt.Errorf("unknown source type: %s", source.Type)

@@ -54,12 +54,12 @@ func (r *HTTPReader) Ping() (int, error) {
 func discoverHTTPSources(opts DiscoveryOptions) []DataSource {
 	url := opts.HTTPEndpoint
 
-	// Fall back to environment variables
+	// Fall back to environment variables (matching main.go's env var names)
 	if url == "" {
-		url = os.Getenv("BEADS_URL")
+		url = os.Getenv("BV_BEADS_URL")
 	}
 	if url == "" {
-		url = os.Getenv("BD_DAEMON_HTTP_URL")
+		url = os.Getenv("BD_DAEMON_HOST")
 	}
 
 	if url == "" {
@@ -79,12 +79,13 @@ func discoverHTTPSources(opts DiscoveryOptions) []DataSource {
 		Priority: PriorityHTTP,
 		ModTime:  time.Now(), // HTTP sources are always "current"
 		Valid:    false,      // Must be validated
+		apiKey:   opts.HTTPAPIKey,
 	}}
 }
 
 // validateHTTP validates an HTTP daemon source by performing a connectivity check.
 func validateHTTP(source *DataSource, opts ValidationOptions) error {
-	reader := NewHTTPReader(source.Path, "")
+	reader := NewHTTPReader(source.Path, source.apiKey)
 	count, err := reader.Ping()
 	if err != nil {
 		return fmt.Errorf("daemon unreachable: %w", err)
@@ -106,16 +107,15 @@ func validateHTTP(source *DataSource, opts ValidationOptions) error {
 
 // HTTPPoller monitors a daemon for changes and triggers callbacks.
 type HTTPPoller struct {
-	reader     *HTTPReader
-	interval   time.Duration
-	callback   func(DataSource)
-	lastCount  int
-	lastHash   string
-	source     DataSource
-	done       chan struct{}
-	mu         sync.Mutex
-	verbose    bool
-	logger     func(msg string)
+	reader    *HTTPReader
+	interval  time.Duration
+	callback  func(DataSource)
+	lastCount int
+	source    DataSource
+	done      chan struct{}
+	mu        sync.Mutex
+	verbose   bool
+	logger    func(msg string)
 }
 
 // HTTPPollerOptions configures the HTTP poller.
@@ -138,7 +138,7 @@ func NewHTTPPoller(source DataSource, callback func(DataSource), opts HTTPPoller
 	}
 
 	return &HTTPPoller{
-		reader:   NewHTTPReader(source.Path, ""),
+		reader:   NewHTTPReader(source.Path, source.apiKey),
 		interval: opts.Interval,
 		callback: callback,
 		source:   source,
@@ -183,12 +183,13 @@ func (p *HTTPPoller) poll() {
 
 	p.mu.Lock()
 	changed := count != p.lastCount
+	oldCount := p.lastCount
 	p.lastCount = count
 	p.mu.Unlock()
 
 	if changed {
 		if p.verbose {
-			p.logger(fmt.Sprintf("HTTP source changed: %d issues (was %d)", count, p.lastCount))
+			p.logger(fmt.Sprintf("HTTP source changed: %d issues (was %d)", count, oldCount))
 		}
 		p.source.IssueCount = count
 		p.source.ModTime = time.Now()
