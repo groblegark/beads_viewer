@@ -29,6 +29,10 @@ func TestMain(m *testing.M) {
 	os.Setenv("BV_NO_BROWSER", "1")
 	os.Setenv("BV_TEST_MODE", "1")
 
+	// Clear BEADS_DIR so the bv binary loads from each test's fixture directory
+	// instead of the host's beads environment.
+	os.Unsetenv("BEADS_DIR")
+
 	// Build the binary once for all tests
 	if err := buildBvOnce(); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to build bv binary: %v\n", err)
@@ -84,6 +88,7 @@ func detectScriptTUICapability(bvPath string) (bool, string) {
 	cmd.Env = append(os.Environ(),
 		"TERM=xterm-256color",
 		"BV_TUI_AUTOCLOSE_MS=250",
+		"BEADS_DIR=",
 	)
 
 	outFile := filepath.Join(tempDir, "script.out")
@@ -380,6 +385,7 @@ func runBVCommand(t *testing.T, workDir string, args ...string) ([]byte, error) 
 	cmd.Env = append(os.Environ(),
 		"BV_NO_BROWSER=1",
 		"BV_TEST_MODE=1",
+		"BEADS_DIR=",
 		"TERM=dumb",
 	)
 

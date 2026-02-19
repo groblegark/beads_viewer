@@ -503,6 +503,7 @@ func TestFindJSONLPath_FollowsSymlink(t *testing.T) {
 // =============================================================================
 
 func TestLoadIssues_NonExistentBeadsDir(t *testing.T) {
+	t.Setenv("BEADS_DIR", "") // Isolate from host environment
 	dir := t.TempDir()
 	// Don't create .beads directory
 	_, err := loader.LoadIssues(dir)
@@ -512,6 +513,7 @@ func TestLoadIssues_NonExistentBeadsDir(t *testing.T) {
 }
 
 func TestLoadIssues_BeadsPathIsFile(t *testing.T) {
+	t.Setenv("BEADS_DIR", "") // Isolate from host environment
 	dir := t.TempDir()
 	beadsFile := filepath.Join(dir, ".beads")
 	if err := os.WriteFile(beadsFile, []byte("not a dir"), 0644); err != nil {
@@ -528,6 +530,7 @@ func TestLoadIssues_BeadsPathIsFile(t *testing.T) {
 }
 
 func TestLoadIssues_EmptyPath(t *testing.T) {
+	t.Setenv("BEADS_DIR", "") // Isolate from host environment
 	// This test verifies that empty path uses current directory
 	// We just verify it doesn't panic - actual behavior depends on cwd
 	_, err := loader.LoadIssues("")
@@ -538,6 +541,7 @@ func TestLoadIssues_EmptyPath(t *testing.T) {
 }
 
 func TestLoadIssues_PathWithSpaces(t *testing.T) {
+	t.Setenv("BEADS_DIR", "") // Isolate from host environment
 	parent := t.TempDir()
 	dir := filepath.Join(parent, "dir with spaces")
 	beadsDir := filepath.Join(dir, ".beads")
@@ -559,6 +563,7 @@ func TestLoadIssues_PathWithSpaces(t *testing.T) {
 }
 
 func TestLoadIssues_ValidRepository(t *testing.T) {
+	t.Setenv("BEADS_DIR", "") // Isolate from host environment
 	dir := t.TempDir()
 	beadsDir := filepath.Join(dir, ".beads")
 	os.MkdirAll(beadsDir, 0755)
@@ -997,6 +1002,9 @@ func TestGetBeadsDir_EmptyRepoPath_UsesCwd(t *testing.T) {
 	// Use a temp directory outside git to test pure cwd fallback behavior
 	// (within a git repo, GetBeadsDir now intelligently finds .beads in the repo root)
 	tmpDir := t.TempDir()
+	// Resolve symlinks — macOS /var is a symlink to /private/var, and
+	// os.Getwd() (used inside GetBeadsDir) returns the real path.
+	tmpDir, _ = filepath.EvalSymlinks(tmpDir)
 	oldCwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("Failed to get cwd: %v", err)

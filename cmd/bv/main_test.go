@@ -12,6 +12,13 @@ import (
 	"github.com/Dicklesworthstone/beads_viewer/pkg/recipe"
 )
 
+func TestMain(m *testing.M) {
+	// Clear BEADS_DIR so subprocess bv binaries load from each test's fixture
+	// directory instead of the host's beads environment.
+	os.Unsetenv("BEADS_DIR")
+	os.Exit(m.Run())
+}
+
 func TestFilterByRepo_CaseInsensitiveAndFlexibleSeparators(t *testing.T) {
 	issues := []model.Issue{
 		{ID: "api-AUTH-1", SourceRepo: "services/api"},
